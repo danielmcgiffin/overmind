@@ -73,6 +73,7 @@ def test_review_is_compressed_and_has_at_most_four_sections():
     assert review.count("\n## ") <= 4
     assert "Timestamps use real elapsed time." in review
     assert "game time" not in review.lower()
+    assert "Macro benchmark/reality:" in review
     assert review.count("At 5:13") == 1
 
 

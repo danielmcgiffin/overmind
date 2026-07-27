@@ -272,6 +272,23 @@ def _supply_provider(race: str | None) -> str:
     return {"Zerg": "Overlord", "Protoss": "Pylon", "Terran": "Supply Depot"}.get(race or "", "supply provider")
 
 
+def _macro_benchmark_reality(derivation: dict[str, Any], player_id: int, extraction: dict[str, Any], speed: str) -> str:
+    snapshots = [item for item in derivation.get("player_snapshots", []) if item.get("player_id") == player_id]
+    if not snapshots:
+        return "**Macro benchmark/reality:** player-stat snapshots were unavailable, so worker and spending reality cannot be compared from this replay."
+    expansions = [item for item in derivation.get("timing", {}).get("expansions", []) if item.get("player_id") == player_id]
+    town_halls = len(expansions) + 1
+    benchmark_workers = town_halls * 15
+    peak = max(snapshots, key=lambda item: item.get("workers_active_count") or 0)
+    latest = snapshots[-1]
+    latest_bank = f"{latest.get('minerals_current', 'n/a')} minerals / {latest.get('vespene_current', 'n/a')} gas"
+    return (
+        f"**Macro benchmark/reality:** with {town_halls} tracked town halls, use roughly {benchmark_workers} workers as this replay's spending checkpoint. "
+        f"Reality was {peak.get('workers_active_count', 'n/a')} workers by {format_real_time(peak['game_loop'], speed)} and {latest.get('workers_active_count', 'n/a')} at {format_real_time(latest['game_loop'], speed)}, with a final bank of {latest_bank}; "
+        f"the economy was {'sufficient and spending was the bottleneck' if (latest.get('workers_active_count') or 0) >= benchmark_workers else 'below the replay benchmark and still needed worker growth'}."
+    )
+
+
 def _earlier_harassment(engagements: list[dict[str, Any]], turning_loop: int, player_id: int, speed: str) -> tuple[int, str] | None:
     earlier = sorted((item for item in engagements if item.get("start_loop", 0) < turning_loop), key=lambda item: item.get("start_loop", 0), reverse=True)
     worker_or_structure_types = {
@@ -304,8 +321,7 @@ def render_review(extraction: dict[str, Any], derivation: dict[str, Any], engage
     opponent_disruptions = [item for item in derivation.get("economy", {}).get("resource_collection_disruptions", []) if item.get("player_id") != player_id]
     blocks = [item for item in derivation.get("economy", {}).get("candidate_supply_blocks", []) if item.get("player_id") == player_id]
     snapshots = [item for item in derivation.get("player_snapshots", []) if item.get("player_id") == player_id]
-    floats = [item for item in derivation.get("economy", {}).get("candidate_resource_floats", []) if item.get("player_id") == player_id]
-    large_floats = [item for item in floats if (item.get("minerals") or 0) >= 1000 or (item.get("vespene") or 0) >= 500]
+    macro_benchmark = _macro_benchmark_reality(derivation, player_id, extraction, speed)
     earlier_harassment = _earlier_harassment(engagements, (turning_engagement or {}).get("start_loop", 0), player_id, speed) if turning_engagement else None
     supporting_contexts: list[tuple[int, str]] = []
     for disruption in sorted(opponent_disruptions, key=lambda item: item.get("start_loop", 0)):
@@ -335,7 +351,7 @@ def render_review(extraction: dict[str, Any], derivation: dict[str, Any], engage
         ]
         findings = [
             ("That exchange produced a favorable army transition and should be treated as a winning close, not a disaster. The fight produced the advantage you wanted, so the next decision should be spending immediately, not re-evaluating the fight.", True, True, True),
-            (f"By {format_real_time(large_floats[-1]['game_loop'], speed) if large_floats else 'the finish'}, the bank reached {large_floats[-1].get('minerals', 'n/a')} minerals and {large_floats[-1].get('vespene', 'n/a')} gas with roughly {snapshots[-1].get('workers_active_count', 'n/a') if snapshots else 'enough'} workers. The unused bank, not worker count, was the main macro leak.", bool(large_floats), True, True),
+            (macro_benchmark, True, True, True),
             (f"Repeated cap pressure from {format_real_time(blocks[0]['start_loop'], speed)} to {format_real_time(blocks[-1]['start_loop'], speed)} made the follow-up less clean.", bool(blocks), True, True),
         ]
         selected = [text for text, material, explains, actionable in findings if _passes_relevance_gate(material=material, explains=explains, actionable=actionable)]
@@ -363,6 +379,7 @@ def render_review(extraction: dict[str, Any], derivation: dict[str, Any], engage
             "",
         ]
         candidates = []
+        candidates.append((macro_benchmark, True, True, True))
         if opponent_disruptions:
             disruption = min(opponent_disruptions, key=lambda item: item.get("start_loop", 0))
             candidates.append((f"Opponent pressure preceded the fight: collection changed from {disruption.get('minerals_collection_rate_before')} to {disruption.get('minerals_collection_rate_after')} between {format_real_time(disruption['start_loop'], speed)} and {format_real_time(disruption['end_loop'], speed)}.", True, True, True))
@@ -377,7 +394,7 @@ def render_review(extraction: dict[str, Any], derivation: dict[str, Any], engage
             "",
             "## What mattered",
             "",
-            "The available facts should be treated as incomplete rather than converted into invented intent or generic advice.",
+            macro_benchmark,
             "",
             "## Next-game rules",
             "",
