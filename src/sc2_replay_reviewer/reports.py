@@ -272,14 +272,14 @@ def _supply_provider(race: str | None) -> str:
     return {"Zerg": "Overlord", "Protoss": "Pylon", "Terran": "Supply Depot"}.get(race or "", "supply provider")
 
 
-def _earlier_harassment(engagements: list[dict[str, Any]], turning_loop: int, player_id: int, speed: str) -> str:
+def _earlier_harassment(engagements: list[dict[str, Any]], turning_loop: int, player_id: int, speed: str) -> tuple[int, str] | None:
     earlier = sorted((item for item in engagements if item.get("start_loop", 0) < turning_loop), key=lambda item: item.get("start_loop", 0), reverse=True)
     for engagement in earlier:
         kills = engagement.get("kills_by_player", {}).get(str(player_id), {})
         if kills:
             own = engagement.get("losses_by_player", {}).get(str(player_id), {})
-            return f"Earlier, a small run at {format_real_time(engagement['start_loop'], speed)} cost {own.get('units', 0)} tracked units and killed {_compact_kills(kills)}."
-    return "No earlier spatially supported harassment was available before the main engagement."
+            return engagement["start_loop"], f"At {format_real_time(engagement['start_loop'], speed)}, a small run cost {own.get('units', 0)} tracked units and killed {_compact_kills(kills)}."
+    return None
 
 
 def render_review(extraction: dict[str, Any], derivation: dict[str, Any], engagements: list[dict[str, Any]], diagnosis: dict[str, Any], player_id: int, config: AppConfig) -> str:
@@ -296,11 +296,16 @@ def render_review(extraction: dict[str, Any], derivation: dict[str, Any], engage
     snapshots = [item for item in derivation.get("player_snapshots", []) if item.get("player_id") == player_id]
     floats = [item for item in derivation.get("economy", {}).get("candidate_resource_floats", []) if item.get("player_id") == player_id]
     large_floats = [item for item in floats if (item.get("minerals") or 0) >= 1000 or (item.get("vespene") or 0) >= 500]
-    earlier_harassment = _earlier_harassment(engagements, (turning_engagement or {}).get("start_loop", 0), player_id, speed) if turning_engagement else ""
-    disruption_text = ""
-    if opponent_disruptions:
-        disruption = min(opponent_disruptions, key=lambda item: item.get("start_loop", 0))
-        disruption_text = f" The opponent's mineral collection rate then fell from {disruption.get('minerals_collection_rate_before')} to {disruption.get('minerals_collection_rate_after')} between {format_real_time(disruption['start_loop'], speed)} and {format_real_time(disruption['end_loop'], speed)}."
+    earlier_harassment = _earlier_harassment(engagements, (turning_engagement or {}).get("start_loop", 0), player_id, speed) if turning_engagement else None
+    supporting_contexts: list[tuple[int, str]] = []
+    for disruption in sorted(opponent_disruptions, key=lambda item: item.get("start_loop", 0)):
+        supporting_contexts.append((
+            disruption.get("start_loop", 0),
+            f"Between {format_real_time(disruption['start_loop'], speed)} and {format_real_time(disruption['end_loop'], speed)}, the opponent's mineral collection rate fell from {disruption.get('minerals_collection_rate_before')} to {disruption.get('minerals_collection_rate_after')}.",
+        ))
+    if earlier_harassment:
+        supporting_contexts.append(earlier_harassment)
+    supporting_context = " ".join(text for _, text in sorted(supporting_contexts)) if supporting_contexts else "No earlier spatially supported harassment or income disruption was available."
 
     lines = ["# Coaching Review", "", "Timestamps use real elapsed time.", ""]
     if player.get("result") == "Win" and turning_engagement:
@@ -313,13 +318,13 @@ def render_review(extraction: dict[str, Any], derivation: dict[str, Any], engage
             "",
             "## Decisive sequence",
             "",
-            f"At {format_real_time(turning_engagement['start_loop'], speed)}, the main engagement cost {own.get('units', 0)} of {player_name}'s units while the opposing cluster lost {_compact_kills(kills)}. {earlier_harassment}{disruption_text} That earlier pressure created real economic disruption; the main engagement was not a failed army fight.",
+            f"At {format_real_time(turning_engagement['start_loop'], speed)}, the main engagement cost {own.get('units', 0)} of {player_name}'s units while the opposing cluster lost {_compact_kills(kills)}. {supporting_context} These are supporting tempo facts; the main engagement was not a failed army fight.",
             "",
             "## What mattered",
             "",
         ]
         findings = [
-            ("That exchange produced a favorable army transition and should be treated as a winning close, not a disaster. The fight produced the advantage you wanted.", True, True, True),
+            ("That exchange produced a favorable army transition and should be treated as a winning close, not a disaster. The fight produced the advantage you wanted, so the next decision should be spending immediately, not re-evaluating the fight.", True, True, True),
             (f"By {format_real_time(large_floats[-1]['game_loop'], speed) if large_floats else 'the finish'}, the bank reached {large_floats[-1].get('minerals', 'n/a')} minerals and {large_floats[-1].get('vespene', 'n/a')} gas with roughly {snapshots[-1].get('workers_active_count', 'n/a') if snapshots else 'enough'} workers. The unused bank, not worker count, was the main macro leak.", bool(large_floats), True, True),
             (f"Repeated cap pressure from {format_real_time(blocks[0]['start_loop'], speed)} to {format_real_time(blocks[-1]['start_loop'], speed)} made the follow-up less clean.", bool(blocks), True, True),
         ]
