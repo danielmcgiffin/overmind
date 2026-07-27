@@ -1,4 +1,6 @@
-# sc2-replay-reviewer
+# overmind
+
+SC2 Replay Agent — persistent, local StarCraft II replay analysis for causal coaching reviews.
 
 Persistent, local StarCraft II replay analysis for causal coaching reviews. The player-facing output is intentionally short; the complete audit trail is generated separately.
 
