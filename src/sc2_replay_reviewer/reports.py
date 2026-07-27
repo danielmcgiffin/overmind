@@ -113,7 +113,7 @@ def render_evidence(extraction: dict[str, Any], derivation: dict[str, Any], enga
     elif turning.get("game_loop") is not None:
         assessment = turning.get("assessment") or {}
         turn = turning.get("engagement_id")
-        lines.append(f"The replay does not support calling the central combat sequence a tactical loss. The material favorable turn was **{turn} at {format_real_time(turning['game_loop'], speed)} real**: the reviewed player removed the opposing armored core according to killer-attributed tracker events. {assessment.get('summary', '')}")
+        lines.append(f"The replay does not support calling the central combat sequence a tactical loss. The material favorable turn was **{turn} at {format_real_time(turning['game_loop'], speed)} real**. {assessment.get('summary', '')}")
     else:
         lines.append("The replay did not provide enough spatially supported death data to identify a candidate decisive engagement. The report below separates what is known from what remains unavailable.")
     lines += ["", "## 3. Decisive turning point", ""]
@@ -309,7 +309,7 @@ def render_review(extraction: dict[str, Any], derivation: dict[str, Any], engage
         lines += [
             "## Verdict",
             "",
-            f"{player_name} won. The primary lesson is conversion: the important fights were favorable, but the advantage was not closed as efficiently as it could have been. The correction is not to stop applying pressure; it is to make the next spending decision automatic once the opponent's core is gone.",
+            f"{player_name} won. The primary lesson is conversion: the important fights were favorable, but the advantage was not closed as efficiently as it could have been. The correction is not to stop applying pressure; it is to make the next spending decision automatic once the opposing army is sufficiently damaged, without inventing a new build.",
             "",
             "## Decisive sequence",
             "",
@@ -319,7 +319,7 @@ def render_review(extraction: dict[str, Any], derivation: dict[str, Any], engage
             "",
         ]
         findings = [
-            ("That exchange removed key high-value opposing units and opened the worker line; it should be treated as a winning transition, not a disaster. The fight produced the advantage you wanted.", True, True, True),
+            ("That exchange produced a favorable army transition and should be treated as a winning close, not a disaster. The fight produced the advantage you wanted.", True, True, True),
             (f"By {format_real_time(large_floats[-1]['game_loop'], speed) if large_floats else 'the finish'}, the bank reached {large_floats[-1].get('minerals', 'n/a')} minerals and {large_floats[-1].get('vespene', 'n/a')} gas with roughly {snapshots[-1].get('workers_active_count', 'n/a') if snapshots else 'enough'} workers. The unused bank, not worker count, was the main macro leak.", bool(large_floats), True, True),
             (f"Repeated cap pressure from {format_real_time(blocks[0]['start_loop'], speed)} to {format_real_time(blocks[-1]['start_loop'], speed)} made the follow-up less clean.", bool(blocks), True, True),
         ]
