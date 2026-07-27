@@ -274,12 +274,22 @@ def _supply_provider(race: str | None) -> str:
 
 def _earlier_harassment(engagements: list[dict[str, Any]], turning_loop: int, player_id: int, speed: str) -> tuple[int, str] | None:
     earlier = sorted((item for item in engagements if item.get("start_loop", 0) < turning_loop), key=lambda item: item.get("start_loop", 0), reverse=True)
+    worker_or_structure_types = {
+        "Drone", "Probe", "SCV", "MULE", "Pylon", "Gateway", "WarpGate", "Nexus",
+        "Hatchery", "CommandCenter", "OrbitalCommand", "Depot", "SupplyDepot", "SpineCrawler", "SporeCrawler",
+    }
+    candidates: list[tuple[int, int, dict[str, Any]]] = []
     for engagement in earlier:
         kills = engagement.get("kills_by_player", {}).get(str(player_id), {})
         if kills:
-            own = engagement.get("losses_by_player", {}).get(str(player_id), {})
-            return engagement["start_loop"], f"At {format_real_time(engagement['start_loop'], speed)}, a small run cost {own.get('units', 0)} tracked units and killed {_compact_kills(kills)}."
-    return None
+            impact = int(any(unit_type in worker_or_structure_types for unit_type in kills))
+            candidates.append((impact, engagement.get("start_loop", 0), engagement))
+    if not candidates:
+        return None
+    _, _, engagement = max(candidates, key=lambda item: (item[0], item[1]))
+    kills = engagement.get("kills_by_player", {}).get(str(player_id), {})
+    own = engagement.get("losses_by_player", {}).get(str(player_id), {})
+    return engagement["start_loop"], f"At {format_real_time(engagement['start_loop'], speed)}, a small run cost {own.get('units', 0)} tracked units and killed {_compact_kills(kills)}."
 
 
 def render_review(extraction: dict[str, Any], derivation: dict[str, Any], engagements: list[dict[str, Any]], diagnosis: dict[str, Any], player_id: int, config: AppConfig) -> str:
