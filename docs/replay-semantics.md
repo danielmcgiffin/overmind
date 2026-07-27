@@ -33,6 +33,16 @@ For Zerg, a raw Drone death event is not automatically a killed worker. Drone ev
 
 Player-stat values are snapshots, not continuous telemetry. A change between two snapshots cannot assign a precise frame or cause to every worker, resource, or army change. APM is not available in the decoded streams currently used and is marked unavailable. Lobby scaled rating is retained as `mmr` with a source note; it is not asserted to be a post-game MMR value.
 
+## Resource float, production, and purchase bounds
+
+The derivation layer groups snapshots into candidate float episodes when minerals are at least 800 or gas is at least 500. The episode ends at the first later snapshot below both thresholds. “Meaningful” means sustained for at least 160 loops, at least 1,200 minerals, at least 800 gas, or supported by repeated state evidence. The episode keeps the qualifying snapshot IDs and the nearest composition snapshot so every report conclusion can be audited.
+
+`available_production_capacity` is an observed count of known unit-producing structures: Zerg Hatchery/Lair/Hive, Terran Barracks/Factory/Starport, and Protoss Gateway/WarpGate/Robotics Facility/Stargate. Zerg tech structures such as Spawning Pool and Roach Warren are not counted as production capacity. This is infrastructure capacity, not proof that a queue was empty. Larva is reported only when at least one Larva was observed for that player in the normalized tracker stream; otherwise it is `null` and `insufficient_larva` is not emitted.
+
+The current bounded purchase illustrations cover Zerg Roaches and Zerglings. They report resource-only bounds and an immediate upper bound constrained by gas, supply room, observed larva, required tech, and known structures. They do not simulate queue duration, injects, morphs, or hidden reservations. A large resource-only number must never be presented as an immediately purchasable army when one of those constraints is tighter.
+
+Float constraint labels are candidates: `supply_blocked`, `insufficient_production`, `insufficient_larva`, `production_idle`, `tech_transition_bank`, `overdroning`, `attention_diversion`, `gas_imbalance`, `mineral_imbalance`, `intentional_reserve`, and `unknown`. Combat overlap alone never proves attention diversion. A supply block is treated as relevant to the peak when it overlaps the peak snapshot or occurs within the nearby conversion window; a late cap is not automatically claimed to explain an entire earlier bank.
+
 ## Ownership and identity
 
 Participant order in `m_playerList` is normalized to player IDs starting at 1. Tracker owner/upkeep player IDs are used for unit ownership. Game-event `_userid` is retained separately because it is a user identity, not necessarily the same field as a tracker player ID. Reports do not silently equate those IDs without an explicit normalized mapping.

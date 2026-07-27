@@ -6,6 +6,7 @@ from collections import Counter, defaultdict
 from typing import Any
 
 from .time import loops_to_game_seconds
+from .version import FACTS_VERSION
 
 WORKER_NAMES = {"Drone", "SCV", "Probe", "MULE"}
 ZERG_WORKER_CONSUMING_STRUCTURES = {
@@ -23,6 +24,31 @@ STRUCTURE_MARKERS = (
     "PhotonCannon", "ShieldBattery", "SpineCrawler", "SporeCrawler", "Extractor", "Refinery",
     "Assimilator", "Pylon", "TechLab", "Reactor", "CreepTumor", "Beacon",
 )
+PRODUCTION_STRUCTURE_NAMES = {
+    "Hatchery", "Lair", "Hive", "Barracks", "Factory", "Starport", "Gateway", "WarpGate",
+    "RoboticsFacility", "Stargate",
+}
+
+CONSTRAINT_PRIORITY = (
+    "supply_blocked",
+    "insufficient_production",
+    "insufficient_larva",
+    "production_idle",
+    "tech_transition_bank",
+    "overdroning",
+    "attention_diversion",
+    "gas_imbalance",
+    "mineral_imbalance",
+    "intentional_reserve",
+    "unknown",
+)
+
+# Costs include the requirements needed to avoid describing an impossible
+# purchase.  These are used for bounded illustrations, not combat simulation.
+PURCHASE_COSTS = {
+    "Roach": {"minerals": 75, "gas": 25, "supply": 2, "larva": 1, "tech": "RoachWarren"},
+    "Zergling": {"minerals": 25, "gas": 0, "supply": 0.5, "larva": 1, "tech": "SpawningPool"},
+}
 
 # Used only when a snapshot's exact active-force score is unavailable. Values
 # are standard resource costs for common LotV units and intentionally retain an
@@ -221,10 +247,17 @@ def _worker_differentials(snapshots: list[dict[str, Any]], players: list[dict[st
 
 def _composition_snapshots(snapshots: list[dict[str, Any]], units: dict[str, dict[str, Any]], players: list[dict[str, Any]]) -> list[dict[str, Any]]:
     result = []
+    larva_observed_by_player = {
+        unit.get("owner_id")
+        for unit in units.values()
+        if unit.get("unit_type") == "Larva" and unit.get("owner_id") is not None
+    }
     for snapshot in snapshots:
         player_id = snapshot.get("player_id")
         composition = Counter()
         structures = Counter()
+        production_structures = Counter()
+        available_larva = 0
         unknown_army_units = 0
         army_value = 0
         value_known = True
@@ -235,8 +268,12 @@ def _composition_snapshots(snapshots: list[dict[str, Any]], units: dict[str, dic
             if created > snapshot["game_loop"]:
                 continue
             unit_type = unit.get("unit_type") or "Unknown"
-            if is_structure(unit_type):
+            if unit_type == "Larva":
+                available_larva += 1
+            elif is_structure(unit_type):
                 structures[unit_type] += 1
+                if unit_type in PRODUCTION_STRUCTURE_NAMES:
+                    production_structures[unit_type] += 1
             elif is_army(unit_type):
                 composition[unit_type] += 1
                 value = unit_value(unit_type)
@@ -258,6 +295,11 @@ def _composition_snapshots(snapshots: list[dict[str, Any]], units: dict[str, dic
                 "vespene_used_active_forces": snapshot.get("vespene_used_active_forces"),
                 "composition": dict(sorted(composition.items())),
                 "structures": dict(sorted(structures.items())),
+                "production_structures": dict(sorted(production_structures.items())),
+                "available_production_capacity": sum(production_structures.values()),
+                "production_observation_reliable": bool(structures),
+                "available_larva": available_larva if player_id in larva_observed_by_player else None,
+                "larva_observation_reliable": player_id in larva_observed_by_player,
                 "army_value": stats_value if stats_value else army_value,
                 "army_value_source": "player_stats.active_forces" if stats_value else "known_unit_cost_sum",
                 "unknown_army_units": unknown_army_units,
@@ -371,7 +413,213 @@ def _timing_facts(units: dict[str, dict[str, Any]], tracker_events: list[dict[st
     }
 
 
-def _economic_flags(snapshots: list[dict[str, Any]]) -> dict[str, Any]:
+def _float_constraints(
+    episode: dict[str, Any],
+    supply_blocks: list[dict[str, Any]],
+    player_race: str | None,
+) -> list[str]:
+    constraints: list[str] = []
+    supply = episode.get("supply_at_peak") or {}
+    peak_supply_room = None
+    if supply.get("used") is not None and supply.get("available") is not None:
+        peak_supply_room = float(supply["available"]) - float(supply["used"])
+    supply_near_peak = any(
+        item.get("start_loop", 0) <= episode.get("peak_loop", 0) + 160
+        and item.get("end_loop", 0) >= episode.get("peak_loop", 0) - 160
+        for item in supply_blocks
+    )
+    if (peak_supply_room is not None and peak_supply_room <= 2) or supply_near_peak:
+        constraints.append("supply_blocked")
+    if episode.get("peak_minerals", 0) >= 1000 and episode.get("production_observation_reliable") and episode.get("available_production_capacity") == 0:
+        constraints.append("insufficient_production")
+    if player_race == "Zerg" and episode.get("larva_observation_reliable") and episode.get("available_larva") == 0:
+        constraints.append("insufficient_larva")
+    tech_resources = episode.get("technology_resources_in_progress", {})
+    if any(value for value in tech_resources.values()):
+        constraints.append("tech_transition_bank")
+    if episode.get("peak_minerals", 0) >= 1000 and episode.get("peak_gas", 0) < 200:
+        constraints.append("gas_imbalance")
+    if episode.get("peak_gas", 0) >= 500 and episode.get("peak_minerals", 0) < 500:
+        constraints.append("mineral_imbalance")
+    if episode.get("available_production_capacity", 0) > 0 and episode.get("peak_minerals", 0) >= 1000:
+        constraints.append("production_idle")
+    if not constraints:
+        constraints.append("unknown")
+    return sorted(set(constraints), key=lambda item: CONSTRAINT_PRIORITY.index(item) if item in CONSTRAINT_PRIORITY else len(CONSTRAINT_PRIORITY))
+
+
+def _purchasing_power(episode: dict[str, Any], player_race: str | None, composition: dict[str, Any]) -> dict[str, Any]:
+    """Return bounded resource-equivalent purchases for an episode peak.
+
+    The replay exposes a bank and some state snapshots, but not complete queue
+    state.  Therefore the result distinguishes resource bounds from an
+    immediate upper bound that is also limited by known supply, larva, and tech.
+    """
+    if player_race != "Zerg":
+        return {}
+    minerals = max(0, int(episode.get("peak_minerals") or 0))
+    gas = max(0, int(episode.get("peak_gas") or 0))
+    supply = episode.get("supply_at_peak") or {}
+    supply_room = None
+    if supply.get("used") is not None and supply.get("available") is not None:
+        supply_room = max(0.0, float(supply["available"]) - float(supply["used"]))
+    larva = episode.get("available_larva") if episode.get("larva_observation_reliable") else None
+    structures = composition.get("structures", {})
+    production_capacity = composition.get("available_production_capacity")
+    result: dict[str, Any] = {}
+    for unit_type in ("Roach", "Zergling"):
+        cost = PURCHASE_COSTS[unit_type]
+        resource_bound = min(
+            minerals // cost["minerals"],
+            gas // cost["gas"] if cost["gas"] else minerals // cost["minerals"],
+        )
+        supply_bound = int(supply_room // cost["supply"]) if supply_room is not None else None
+        larva_bound = int(larva // cost["larva"]) if larva is not None else None
+        tech_known = any(count > 0 for name, count in structures.items() if cost["tech"] in name)
+        tech_available: bool | None = tech_known if composition.get("structures") else None
+        bounds = [resource_bound]
+        if supply_bound is not None:
+            bounds.append(supply_bound)
+        if larva_bound is not None:
+            bounds.append(larva_bound)
+        immediate_upper_bound = min(bounds) if tech_available is True else (0 if tech_available is False else None)
+        result[unit_type] = {
+            "cost": {"minerals": cost["minerals"], "gas": cost["gas"], "supply": cost["supply"], "larva": cost["larva"]},
+            "resource_bound": int(resource_bound),
+            "supply_bound": supply_bound,
+            "larva_bound": larva_bound,
+            "tech_required": cost["tech"],
+            "tech_available": tech_available,
+            "production_capacity_observed": production_capacity,
+            "immediate_upper_bound": immediate_upper_bound,
+            "interpretation_status": "resource equivalent; queue timing and exact larva reservation remain unavailable",
+        }
+    return result
+
+
+def _float_episodes(
+    snapshots: list[dict[str, Any]],
+    compositions: list[dict[str, Any]],
+    timing: dict[str, Any],
+    deaths: list[dict[str, Any]],
+    players: list[dict[str, Any]],
+    supply_blocks: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Group sustained resource banks into auditable episodes.
+
+    A threshold crossing is a candidate float, not proof of an execution error.
+    The episode retains the nearest stats/composition evidence and explicitly
+    marks queue/attention claims as unavailable when the replay cannot prove them.
+    """
+    player_races = {int(player["player_id"]): player.get("race") for player in players if player.get("player_id") is not None}
+    by_player: dict[int, list[dict[str, Any]]] = defaultdict(list)
+    comp_by_key = {(item.get("player_id"), item.get("game_loop")): item for item in compositions}
+    for snapshot in snapshots:
+        if snapshot.get("player_id") is not None:
+            by_player[int(snapshot["player_id"])].append(snapshot)
+    all_episodes: list[dict[str, Any]] = []
+    for player_id, items in by_player.items():
+        items.sort(key=lambda item: item["game_loop"])
+        index = 0
+        while index < len(items):
+            snapshot = items[index]
+            is_float = (snapshot.get("minerals_current") or 0) >= 800 or (snapshot.get("vespene_current") or 0) >= 500
+            if not is_float:
+                index += 1
+                continue
+            start_index = index
+            qualified: list[dict[str, Any]] = []
+            while index < len(items):
+                current = items[index]
+                if (current.get("minerals_current") or 0) < 800 and (current.get("vespene_current") or 0) < 500:
+                    break
+                qualified.append(current)
+                index += 1
+            last_qualified = qualified[-1]
+            boundary = items[index] if index < len(items) else None
+            peak = max(qualified, key=lambda item: (item.get("minerals_current") or 0) + (item.get("vespene_current") or 0))
+            peak_loop = peak["game_loop"]
+            composition = comp_by_key.get((player_id, peak_loop))
+            if composition is None:
+                same_player = [item for item in compositions if item.get("player_id") == player_id]
+                composition = min(same_player, key=lambda item: abs(item.get("game_loop", 0) - peak_loop), default={})
+            completed_towns = [
+                item for item in timing.get("completed_structures", [])
+                if item.get("player_id") == player_id and item.get("is_town_hall") and item.get("game_loop", 0) <= peak_loop
+            ]
+            tech_resources = {
+                "minerals": peak.get("minerals_used_in_progress_technology") or 0,
+                "gas": peak.get("vespene_used_in_progress_technology") or 0,
+            }
+            active_deaths = [
+                item for item in deaths
+                if item.get("game_loop", 0) >= qualified[0]["game_loop"]
+                and item.get("game_loop", 0) <= (boundary or last_qualified).get("game_loop", 0)
+                and (item.get("owner_id") == player_id or item.get("killer_player_id") == player_id)
+            ]
+            next_snapshot = boundary
+            bank_before = (last_qualified.get("minerals_current") or 0) + (last_qualified.get("vespene_current") or 0)
+            bank_after = ((next_snapshot or {}).get("minerals_current") or 0) + ((next_snapshot or {}).get("vespene_current") or 0)
+            bank_spent_after_active_fighting = bool(active_deaths and next_snapshot and bank_after <= bank_before - 300)
+            episode = {
+                "player_id": player_id,
+                "start_loop": qualified[0]["game_loop"],
+                "end_loop": (boundary or last_qualified)["game_loop"],
+                "duration_loops": (boundary or last_qualified)["game_loop"] - qualified[0]["game_loop"],
+                "peak_loop": peak_loop,
+                "peak_minerals": peak.get("minerals_current") or 0,
+                "peak_gas": peak.get("vespene_current") or 0,
+                "worker_count_at_start": qualified[0].get("workers_active_count"),
+                "worker_count_at_peak": peak.get("workers_active_count"),
+                "base_count_at_peak": len(completed_towns),
+                "supply_at_start": {"used": qualified[0].get("food_used"), "available": qualified[0].get("food_made")},
+                "supply_at_peak": {"used": peak.get("food_used"), "available": peak.get("food_made")},
+                "available_production_capacity": composition.get("available_production_capacity"),
+                "production_structures": composition.get("production_structures", {}),
+                "available_larva": composition.get("available_larva") if player_races.get(player_id) == "Zerg" else None,
+                "production_observation_reliable": composition.get("production_observation_reliable", False),
+                "larva_observation_reliable": composition.get("larva_observation_reliable", False),
+                "structures_at_peak": composition.get("structures", {}),
+                "technology_resources_in_progress": tech_resources,
+                "completed_upgrades_at_peak": [
+                    item.get("upgrade") for item in timing.get("upgrades", [])
+                    if item.get("player_id") == player_id and item.get("game_loop", 0) <= peak_loop
+                ],
+                "actively_fighting": bool(active_deaths),
+                "active_fighting_event_count": len(active_deaths),
+                "bank_spent_after_active_fighting": bank_spent_after_active_fighting,
+                "bank_after_episode": bank_after if next_snapshot else None,
+                "evidence": [item.get("evidence_id") for item in qualified if item.get("evidence_id")],
+                "snapshot_evidence": [item.get("evidence_id") for item in qualified if item.get("evidence_id")],
+                "interpretation_status": "candidate sustained resource float; queue state and intent are not fully observable",
+            }
+            episode["constraints"] = _float_constraints(episode, [item for item in supply_blocks if item.get("player_id") == player_id], player_races.get(player_id))
+            episode["primary_constraint"] = episode["constraints"][0] if episode["constraints"] else "unknown"
+            peak_supply = episode.get("supply_at_peak") or {}
+            if (
+                episode["primary_constraint"] == "supply_blocked"
+                and "production_idle" in episode["constraints"]
+                and peak_supply.get("used") is not None
+                and peak_supply.get("available") is not None
+                and float(peak_supply["available"]) - float(peak_supply["used"]) > 2
+            ):
+                episode["primary_constraint"] = "production_idle"
+            episode["purchasing_power"] = _purchasing_power(episode, player_races.get(player_id), composition)
+            episode["meaningful"] = bool(episode["duration_loops"] >= 160 or episode["peak_minerals"] >= 1200 or episode["peak_gas"] >= 800)
+            episode["importance_reasons"] = [
+                reason for reason, condition in (
+                    ("large", episode["peak_minerals"] >= 1200 or episode["peak_gas"] >= 800),
+                    ("sustained", episode["duration_loops"] >= 160),
+                    ("repeated_snapshots", len(qualified) >= 2),
+                    ("after_active_fighting", bool(active_deaths)),
+                    ("after_worker_benchmark", bool(episode.get("worker_count_at_peak") and episode.get("base_count_at_peak") and episode["worker_count_at_peak"] >= episode["base_count_at_peak"] * 15)),
+                ) if condition
+            ]
+            all_episodes.append(episode)
+    return sorted(all_episodes, key=lambda item: (item["player_id"], item["start_loop"]))
+
+
+def _economic_flags(snapshots: list[dict[str, Any]], compositions: list[dict[str, Any]], timing: dict[str, Any], deaths: list[dict[str, Any]], players: list[dict[str, Any]]) -> dict[str, Any]:
     by_player: dict[int, list[dict[str, Any]]] = defaultdict(list)
     for snapshot in snapshots:
         if snapshot.get("player_id") is not None:
@@ -437,7 +685,12 @@ def _economic_flags(snapshots: list[dict[str, Any]]) -> dict[str, Any]:
                     "interpretation_status": "observable plateau; not automatically an error",
                 }
             )
-    return {"candidate_supply_blocks": supply_blocks, "candidate_resource_floats": floats, "worker_count_plateaus": plateaus}
+    return {
+        "candidate_supply_blocks": supply_blocks,
+        "candidate_resource_floats": floats,
+        "float_episodes": _float_episodes(snapshots, compositions, timing, deaths, players, supply_blocks),
+        "worker_count_plateaus": plateaus,
+    }
 
 
 def _resource_collection_disruptions(snapshots: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -487,18 +740,19 @@ def derive_facts(extraction: dict[str, Any]) -> dict[str, Any]:
     units, deaths = _unit_ledger(tracker_events)
     snapshots = _stats_snapshots(tracker_events)
     timing = _timing_facts(units, tracker_events)
+    composition_snapshots = _composition_snapshots(snapshots, units, players)
     derivation = {
         "schema_version": extraction.get("schema_version"),
-        "facts_version": "1.0",
+        "facts_version": FACTS_VERSION,
         "player_snapshots": snapshots,
         "worker_differentials": _worker_differentials(snapshots, players),
         "units": sorted(units.values(), key=lambda item: (item.get("init_loop") or item.get("birth_loop") or 0, item.get("unit_tag") or 0)),
         "deaths": deaths,
         "losses": _loss_aggregates(deaths, tracker_events, players),
-        "composition_snapshots": _composition_snapshots(snapshots, units, players),
+        "composition_snapshots": composition_snapshots,
         "timing": timing,
         "economy": {
-            **_economic_flags(snapshots),
+            **_economic_flags(snapshots, composition_snapshots, timing, deaths, players),
             "resource_collection_disruptions": _resource_collection_disruptions(snapshots),
         },
         "production": {

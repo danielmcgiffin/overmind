@@ -37,6 +37,32 @@ def _bundle():
         "economy": {
             "candidate_supply_blocks": [{"player_id": 1, "start_loop": 8000, "supply_used": 120, "supply_available": 120, "evidence": ["tracker:2"]}],
             "candidate_resource_floats": [{"player_id": 1, "game_loop": 9000, "minerals": 1200, "vespene": 600, "evidence": ["tracker:1"]}],
+            "float_episodes": [{
+                "player_id": 1,
+                "start_loop": 8000,
+                "end_loop": 10000,
+                "duration_loops": 2000,
+                "peak_loop": 9000,
+                "peak_minerals": 1200,
+                "peak_gas": 600,
+                "worker_count_at_start": 30,
+                "worker_count_at_peak": 45,
+                "base_count_at_peak": 3,
+                "supply_at_peak": {"used": 120, "available": 120},
+                "available_production_capacity": 3,
+                "available_larva": 2,
+                "constraints": ["supply_blocked"],
+                "primary_constraint": "supply_blocked",
+                "actively_fighting": False,
+                "bank_spent_after_active_fighting": False,
+                "completed_upgrades_at_peak": [],
+                "evidence": ["tracker:1"],
+                "meaningful": True,
+                "purchasing_power": {
+                    "Roach": {"resource_bound": 16, "immediate_upper_bound": 0, "supply_bound": 0, "larva_bound": 2, "tech_available": True},
+                    "Zergling": {"resource_bound": 48, "immediate_upper_bound": 0, "supply_bound": 0, "larva_bound": 2, "tech_available": True},
+                },
+            }],
             "resource_collection_disruptions": [{"player_id": 2, "start_loop": 4000, "end_loop": 4200, "minerals_collection_rate_before": 783, "minerals_collection_rate_after": 195, "evidence": ["tracker:3", "tracker:4"]}],
         },
         "losses": {"worker_deaths": [], "worker_loss_summary_by_player": {}},
@@ -66,15 +92,17 @@ def _bundle():
     return extraction, derivation, [engagement], diagnosis, timeline
 
 
-def test_review_is_compressed_and_has_at_most_four_sections():
+def test_review_is_compressed_and_spending_first():
     extraction, derivation, engagements, diagnosis, _ = _bundle()
     review = render_review(extraction, derivation, engagements, diagnosis, 1, AppConfig())
-    assert 250 <= len(review.split()) <= 500
-    assert review.count("\n## ") <= 4
+    assert 200 <= len(review.split()) <= 400
+    assert review.count("\n## ") == 5
     assert "Timestamps use real elapsed time." in review
     assert "game time" not in review.lower()
     assert "Macro benchmark/reality:" in review
-    assert review.count("At 5:13") == 1
+    assert "## Spending verdict" in review
+    assert "## Float timeline" in review
+    assert "## Next-game trigger" in review
 
 
 def test_evidence_report_keeps_timeline_and_audit_sections():
@@ -85,3 +113,4 @@ def test_evidence_report_keeps_timeline_and_audit_sections():
     assert "## 14. Evidence appendix" in evidence
     assert "Evidence methodology and limitations" in evidence
     assert "tracker:5" in evidence
+    assert "Meaningful resource-float episodes" in evidence
