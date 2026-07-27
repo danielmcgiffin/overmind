@@ -1,0 +1,12 @@
+.venv/
+.cache/
+output/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+*.SC2Replay
+*.sc2replay
+.coverage
+dist/
+build/
+*.egg-info/

@@ -1,0 +1,38 @@
+[build-system]
+requires = ["hatchling>=1.25"]
+build-backend = "hatchling.build"
+
+[project]
+name = "sc2-replay-reviewer"
+version = "0.1.0"
+description = "Evidence-grounded StarCraft II replay review and coaching reports"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+  "s2protocol==5.0.16.97563.0",
+  "sc2reader==1.9.0",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest==8.3.5",
+]
+
+[project.scripts]
+sc2review = "sc2_replay_reviewer.cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/sc2_replay_reviewer"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+
+[tool.uv]
+package = true
+default-groups = ["dev"]
+
+[dependency-groups]
+dev = [
+  "pytest==8.3.5",
+]
