@@ -1,0 +1,19 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+project_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+venv_python="$project_dir/.venv/bin/python"
+
+if [[ ! -x "$venv_python" ]]; then
+  if [[ "${1:-}" == "bootstrap" ]]; then
+    exec "$project_dir/scripts/bootstrap.sh"
+  fi
+  echo "sc2review is not bootstrapped. Run ./sc2review bootstrap first." >&2
+  exit 2
+fi
+
+if [[ "${1:-}" == "bootstrap" ]]; then
+  exec "$project_dir/scripts/bootstrap.sh"
+fi
+
+exec "$venv_python" -m sc2_replay_reviewer.cli "$@"

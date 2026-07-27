@@ -1,0 +1,13 @@
+[player]
+name = ""
+preferred_race = ""
+
+[replays]
+# Set this once, then commands can use a replay filename instead of a full path.
+# Example: directory = "/home/you/.local/share/Steam/.../Replays/Multiplayer"
+directory = ""
+
+[report]
+primary_time = "real"
+show_real_time = false
+tone = "direct"
