@@ -41,6 +41,8 @@ The derivation layer groups snapshots into candidate float episodes when mineral
 
 The current bounded purchase illustrations cover Zerg Roaches and Zerglings. They report resource-only bounds and an immediate upper bound constrained by gas, supply room, observed larva, required tech, and known structures. They do not simulate queue duration, injects, morphs, or hidden reservations. A large resource-only number must never be presented as an immediately purchasable army when one of those constraints is tighter.
 
+`base_count_at_peak` counts completed town halls by the episode peak. Macro benchmark prose uses that time-local base count; later expansions are reported as a transition and do not retroactively turn an earlier two-base spending window into a four-base benchmark.
+
 Float constraint labels are candidates: `supply_blocked`, `insufficient_production`, `insufficient_larva`, `production_idle`, `tech_transition_bank`, `overdroning`, `attention_diversion`, `gas_imbalance`, `mineral_imbalance`, `intentional_reserve`, and `unknown`. Combat overlap alone never proves attention diversion. A supply block is treated as relevant to the peak when it overlaps the peak snapshot or occurs within the nearby conversion window; a late cap is not automatically claimed to explain an entire earlier bank.
 
 ## Ownership and identity

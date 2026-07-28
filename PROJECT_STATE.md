@@ -1,6 +1,6 @@
 # Project state
 
-Last updated: 2026-07-27
+Last updated: 2026-07-28
 
 ## Architecture
 
@@ -12,7 +12,7 @@ The project is a local Python package exposed through `./sc2review` and `uv run 
 4. `review.py` generates structured facts and explicitly labeled inferences, including candidate negative turning points, favorable transitions, and a causal chain. Killer-attributed losses are retained per engagement so cheap-unit trades are not automatically labeled failures.
 5. `reports.py` writes the concise spending-first `review.md`, the detailed audit `evidence.md`, and a compatibility `report.md` index; `pipeline.py` handles the content-hash cache and replay-specific outputs.
 
-The canonical internal model is JSON-compatible dictionaries with stable evidence IDs. Parser-specific dictionaries are retained only inside each normalized event's `payload` for auditability; downstream code uses normalized top-level fields. The current derivation facts version is `1.1`, including float episodes and bounded purchase power.
+The canonical internal model is JSON-compatible dictionaries with stable evidence IDs. Parser-specific dictionaries are retained only inside each normalized event's `payload` for auditability; downstream code uses normalized top-level fields. The current derivation facts version is `1.2`, including float start-bank fields, float episodes, and bounded purchase power.
 
 ## Installed tools and selection decisions
 
@@ -88,6 +88,7 @@ The named licensed fixture was not mounted. An auxiliary local replay with base 
 - User-facing timestamps are real elapsed time only. Game loops remain canonical internal coordinates, but reports, reviews, timeline CSV, and inspect output do not expose alternate clock timestamps.
 - `review.md` is relevance-gated: each candidate finding must materially affect the result, explain the primary diagnosis, or be actionable in at least two of those three dimensions. Compression limits it to 200–400 words, five spending-first sections, and one measurable next-game trigger; `evidence.md` retains the omitted detail.
 - Every `review.md` includes a concise Macro benchmark/reality comparison: a replay-specific worker/saturation spending checkpoint versus the actual worker count, bank, and spending state.
+- Macro benchmarks are time-aware: a late base does not retroactively raise the worker checkpoint for an earlier float episode. Reviews explicitly identify late expansion transitions that turn pressure into an unintended two-base commitment.
 - Spending episodes are the primary coaching object. The report ranks float and conversion before supply, worker saturation, production/larva, reinforcement continuity, technology, and combat.
 - `evidence.md` is the canonical human-readable audit report. `report.md` is retained as a compatibility index so existing consumers can find the separated outputs without receiving the verbose evidence by default.
 - The repository package excludes `.SC2Replay` files, output/cache/virtual-environment directories, and local `.agents`/`.codex` metadata. Replay locations are configured by the consumer in `config.toml` or per command with `--replay-dir`; no personal replay path is part of the shareable source.

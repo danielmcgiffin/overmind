@@ -56,19 +56,35 @@ def _bank(snapshot: dict[str, Any]) -> str:
     return f"{minerals if minerals is not None else 'n/a'}m / {gas if gas is not None else 'n/a'}g"
 
 
+def _expansions_for_player(derivation: dict[str, Any], player_id: int) -> list[dict[str, Any]]:
+    return sorted(
+        [item for item in derivation.get("timing", {}).get("expansions", []) if item.get("player_id") == player_id],
+        key=lambda item: item.get("game_loop", 0),
+    )
+
+
+def _town_halls_at_loop(derivation: dict[str, Any], player_id: int, game_loop: int) -> int:
+    return 1 + sum(1 for item in _expansions_for_player(derivation, player_id) if item.get("game_loop", 0) <= game_loop)
+
+
 def _macro_guidance(derivation: dict[str, Any], player_id: int, speed: str) -> list[str]:
     snapshots = [item for item in derivation.get("player_snapshots", []) if item.get("player_id") == player_id]
     if not snapshots:
         return ["No player-stat snapshots were available, so macro benchmarks cannot be established from this replay."]
     peak = max(snapshots, key=lambda item: item.get("workers_active_count") or 0)
-    expansions = [item for item in derivation.get("timing", {}).get("expansions", []) if item.get("player_id") == player_id]
-    town_halls = len(expansions) + 1
+    focus = _float_episode(derivation, player_id)
+    focus_loop = (focus or {}).get("peak_loop", peak.get("game_loop", 0))
+    focus_bases = (focus or {}).get("base_count_at_peak") or _town_halls_at_loop(derivation, player_id, focus_loop)
+    focus_benchmark = focus_bases * 15
+    final_bases = _town_halls_at_loop(derivation, player_id, snapshots[-1].get("game_loop", 0))
+    final_benchmark = final_bases * 15
+    expansions = _expansions_for_player(derivation, player_id)
     worker_path = []
     for snapshot in _macro_snapshot_rows(snapshots, speed):
         worker_path.append(f"{snapshot.get('workers_active_count', 'n/a')} at {format_real_time(snapshot['game_loop'], speed)} real")
     worker_path_text = ", ".join(worker_path)
     lines = [
-        f"- **Worker benchmark:** the reviewed player reached {peak.get('workers_active_count', 'n/a')} active workers by {format_real_time(peak['game_loop'], speed)} real and finished near {snapshots[-1].get('workers_active_count', 'n/a')}. With {town_halls} tracked town halls, use the observed path as the benchmark rather than importing a generic 65-worker target.",
+        f"- **Worker benchmark:** the main spending window was {focus_bases} bases, so use roughly {focus_benchmark} workers as its checkpoint. The reviewed player had {focus.get('worker_count_at_start', 'n/a') if focus else 'n/a'} at {format_real_time(focus.get('start_loop', focus_loop), speed) if focus else format_real_time(focus_loop, speed)} real and reached {peak.get('workers_active_count', 'n/a')} by {format_real_time(peak['game_loop'], speed)}; later bases changed the end-state benchmark to {final_benchmark} workers, but the player finished near {snapshots[-1].get('workers_active_count', 'n/a')}.",
     ]
     blocks = [item for item in derivation.get("economy", {}).get("candidate_supply_blocks", []) if item.get("player_id") == player_id]
     if blocks:
@@ -78,7 +94,11 @@ def _macro_guidance(derivation: dict[str, Any], player_id: int, speed: str) -> l
     large_floats = [item for item in floats if (item.get("minerals") or 0) >= 1000 or (item.get("vespene") or 0) >= 500]
     if large_floats:
         worst = max(large_floats, key=lambda item: (item.get("minerals") or 0) + (item.get("vespene") or 0))
-        lines.append(f"- **Spend benchmark:** the bank reached {worst.get('minerals', 'n/a')} minerals / {worst.get('vespene', 'n/a')} gas at {format_real_time(worst['game_loop'], speed)} real. With about {peak.get('workers_active_count', 'n/a')} workers and {town_halls} tracked town halls, a bank of 1,000+ minerals is the moment to inject, add production, start tech/upgrades, or queue the next army wave—not a reason to make more workers automatically.")
+        lines.append(f"- **Spend benchmark:** the bank reached {worst.get('minerals', 'n/a')} minerals / {worst.get('vespene', 'n/a')} gas at {format_real_time(worst['game_loop'], speed)} real. During the main window, {focus_bases} bases and {focus.get('worker_count_at_peak', peak.get('workers_active_count', 'n/a')) if focus else peak.get('workers_active_count', 'n/a')} workers were already enough to require a conversion decision: add the next base or production, start tech, or queue the next army wave.")
+    late_expansions = [item for item in expansions if item.get("game_loop", 0) > (focus or {}).get("start_loop", 0)]
+    if late_expansions and focus:
+        late_text = ", ".join(f"{item.get('unit_type')} at {format_real_time(item['game_loop'], speed)} real" for item in late_expansions)
+        lines.append(f"- **Expansion transition:** after the main float began, the next tracked town halls completed at {late_text}. The bank therefore supported a prolonged two-base commitment before the expansion transition became visible.")
     if worker_path_text:
         lines.append(f"- **Personal checkpoint path:** {worker_path_text}. These are this replay's benchmarks, not universal build-order laws.")
     lines.append("- **After a successful fight:** immediately convert the advantage into a new wave, tech, or map-control action while keeping injects and supply ahead. A favorable engagement is wasted if the bank later rises while the army count stalls.")
@@ -282,12 +302,28 @@ def _macro_benchmark_reality(derivation: dict[str, Any], player_id: int, extract
     snapshots = [item for item in derivation.get("player_snapshots", []) if item.get("player_id") == player_id]
     if not snapshots:
         return "**Macro benchmark/reality:** player-stat snapshots were unavailable, so worker and spending reality cannot be compared from this replay."
-    expansions = [item for item in derivation.get("timing", {}).get("expansions", []) if item.get("player_id") == player_id]
-    town_halls = len(expansions) + 1
-    benchmark_workers = town_halls * 15
     peak = max(snapshots, key=lambda item: item.get("workers_active_count") or 0)
     latest = snapshots[-1]
     latest_bank = f"{latest.get('minerals_current', 'n/a')} minerals / {latest.get('vespene_current', 'n/a')} gas"
+    focus = _float_episode(derivation, player_id)
+    if focus:
+        focus_bases = focus.get("base_count_at_peak") or _town_halls_at_loop(derivation, player_id, focus.get("peak_loop", 0))
+        focus_benchmark = focus_bases * 15
+        final_bases = max(focus_bases, _town_halls_at_loop(derivation, player_id, latest.get("game_loop", 0)))
+        final_benchmark = final_bases * 15
+        late_expansions = [item for item in _expansions_for_player(derivation, player_id) if item.get("game_loop", 0) > focus.get("start_loop", 0)]
+        late_text = ""
+        if late_expansions:
+            completion_text = ", ".join(f"{item.get('unit_type')} at {format_real_time(item['game_loop'], speed)} real" for item in late_expansions)
+            late_text = f" Additional town halls completed later at {completion_text}."
+        return (
+            f"**Macro benchmark/reality:** the main float occurred on {focus_bases} bases, so roughly {focus_benchmark} workers was the relevant spending checkpoint. "
+            f"Reality was {focus.get('worker_count_at_start', 'n/a')} workers at {format_real_time(focus['start_loop'], speed)} and {focus.get('worker_count_at_peak', 'n/a')} at the peak.{late_text} "
+            f"The final state was {latest.get('workers_active_count', 'n/a')} workers against a {final_benchmark}-worker checkpoint for {final_bases} bases, with a final bank of {latest_bank}; this supports an extended two-base commitment followed by a late expansion transition."
+        )
+    expansions = _expansions_for_player(derivation, player_id)
+    town_halls = len(expansions) + 1
+    benchmark_workers = town_halls * 15
     return (
         f"**Macro benchmark/reality:** with {town_halls} tracked town halls, use roughly {benchmark_workers} workers as this replay's spending checkpoint. "
         f"Reality was {peak.get('workers_active_count', 'n/a')} workers by {format_real_time(peak['game_loop'], speed)} and {latest.get('workers_active_count', 'n/a')} at {format_real_time(latest['game_loop'], speed)}, with a final bank of {latest_bank}; "
@@ -367,6 +403,7 @@ def render_review(extraction: dict[str, Any], derivation: dict[str, Any], engage
     player_name = _name(extraction, player_id)
     macro_benchmark = _macro_benchmark_reality(derivation, player_id, extraction, speed)
     episode = _float_episode(derivation, player_id)
+    expansions = _expansions_for_player(derivation, player_id)
     blocks = [item for item in derivation.get("economy", {}).get("candidate_supply_blocks", []) if item.get("player_id") == player_id]
     lines = ["# Coaching Review", "", "Timestamps use real elapsed time.", ""]
 
@@ -388,7 +425,7 @@ def render_review(extraction: dict[str, Any], derivation: dict[str, Any], engage
     lines += ["", "## Float timeline", ""]
     if episode:
         lines.append(
-            f"The main episode ran from {format_real_time(episode['start_loop'], speed)} to {format_real_time(episode['end_loop'], speed)} real ({format_real_time(episode.get('duration_loops', 0), speed)}), peaking at {episode.get('peak_minerals')} minerals / {episode.get('peak_gas')} gas at {format_real_time(episode['peak_loop'], speed)}. "
+            f"The main episode ran from {format_real_time(episode['start_loop'], speed)} to {format_real_time(episode['end_loop'], speed)} real ({format_real_time(episode.get('duration_loops', 0), speed)}), starting at {episode.get('start_minerals')} minerals / {episode.get('start_gas')} gas and peaking at {episode.get('peak_minerals')} minerals / {episode.get('peak_gas')} gas at {format_real_time(episode['peak_loop'], speed)}. "
             f"At the peak: {episode.get('worker_count_at_start', 'n/a')}→{episode.get('worker_count_at_peak', 'n/a')} workers, {episode.get('base_count_at_peak', 'n/a')} bases, {_supply_text(episode.get('supply_at_peak'))}, {episode.get('available_production_capacity', 'n/a')} tracked production capacity, and {episode.get('available_larva', 'n/a')} tracked larva."
         )
     else:
@@ -409,8 +446,12 @@ def render_review(extraction: dict[str, Any], derivation: dict[str, Any], engage
 
     lines += ["", "## What the bank should have become", ""]
     if episode:
-        lines.append(f"{_purchase_sentence(episode, player)} The actionable conversion was a named purchase sequence, not a generic command to macro: clear supply first when capped, then spend the bank through the observed tech/larva/production limits."
-        )
+        conversion = f"{_purchase_sentence(episode, player)} The actionable conversion was a named purchase sequence, not a generic command to macro: clear supply first when capped, then spend the bank through the observed tech/larva/production limits."
+        late_expansions = [item for item in expansions if item.get("game_loop", 0) > episode.get("start_loop", 0)]
+        if late_expansions:
+            first_late = late_expansions[0]
+            conversion += f" The clearest missed transition was the third-base decision: no additional Hatchery completed until {format_real_time(first_late['game_loop'], speed)}, so the original pressure plan hardened into an accidental two-base all-in."
+        lines.append(conversion)
     else:
         lines.append("Use the next verified bank threshold as the conversion point: spend on the next production, tech, or army purchase before taking another worker or moving the army.")
 

@@ -567,6 +567,8 @@ def _float_episodes(
                 "end_loop": (boundary or last_qualified)["game_loop"],
                 "duration_loops": (boundary or last_qualified)["game_loop"] - qualified[0]["game_loop"],
                 "peak_loop": peak_loop,
+                "start_minerals": qualified[0].get("minerals_current") or 0,
+                "start_gas": qualified[0].get("vespene_current") or 0,
                 "peak_minerals": peak.get("minerals_current") or 0,
                 "peak_gas": peak.get("vespene_current") or 0,
                 "worker_count_at_start": qualified[0].get("workers_active_count"),
