@@ -83,8 +83,12 @@ def _macro_guidance(derivation: dict[str, Any], player_id: int, speed: str) -> l
     for snapshot in _macro_snapshot_rows(snapshots, speed):
         worker_path.append(f"{snapshot.get('workers_active_count', 'n/a')} at {format_real_time(snapshot['game_loop'], speed)} real")
     worker_path_text = ", ".join(worker_path)
+    if final_bases != focus_bases:
+        end_state_text = f"later bases changed the end-state benchmark to {final_benchmark} workers"
+    else:
+        end_state_text = f"the same {final_bases}-base economy still implied a {final_benchmark}-worker checkpoint"
     lines = [
-        f"- **Worker benchmark:** the main spending window was {focus_bases} bases, so use roughly {focus_benchmark} workers as its checkpoint. The reviewed player had {focus.get('worker_count_at_start', 'n/a') if focus else 'n/a'} at {format_real_time(focus.get('start_loop', focus_loop), speed) if focus else format_real_time(focus_loop, speed)} real and reached {peak.get('workers_active_count', 'n/a')} by {format_real_time(peak['game_loop'], speed)}; later bases changed the end-state benchmark to {final_benchmark} workers, but the player finished near {snapshots[-1].get('workers_active_count', 'n/a')}.",
+        f"- **Worker benchmark:** the main spending window was {focus_bases} bases, so use roughly {focus_benchmark} workers as its checkpoint. The reviewed player had {focus.get('worker_count_at_start', 'n/a') if focus else 'n/a'} at {format_real_time(focus.get('start_loop', focus_loop), speed) if focus else format_real_time(focus_loop, speed)} real and reached {peak.get('workers_active_count', 'n/a')} by {format_real_time(peak['game_loop'], speed)}; {end_state_text}, but the player finished near {snapshots[-1].get('workers_active_count', 'n/a')}.",
     ]
     blocks = [item for item in derivation.get("economy", {}).get("candidate_supply_blocks", []) if item.get("player_id") == player_id]
     if blocks:
@@ -318,11 +322,15 @@ def _macro_benchmark_reality(derivation: dict[str, Any], player_id: int, extract
             late_text = f" Additional town halls completed later at {completion_text}."
         else:
             late_text = " No later expansion transition was needed; this was already the relevant base count for the episode."
-        state_text = (
-            "this supports an extended commitment before a late expansion transition"
-            if late_expansions
-            else "this supports a saturated three-base economy with spending and production as the bottleneck"
-        )
+        final_workers = latest.get("workers_active_count")
+        if late_expansions:
+            state_text = "this supports an extended commitment before a late expansion transition"
+        elif final_workers is not None and final_workers >= final_benchmark:
+            state_text = f"this supports a saturated {final_bases}-base economy with spending and production as the bottleneck"
+        elif final_workers is not None:
+            state_text = f"this supports worker loss and economic collapse after the fighting window: {final_workers} workers remained versus the {final_benchmark}-worker checkpoint"
+        else:
+            state_text = "the final worker count was unavailable, so the end-state economy cannot be classified"
         return (
             f"**Macro benchmark/reality:** the main float occurred on {focus_bases} bases, so roughly {focus_benchmark} workers was the relevant spending checkpoint. "
             f"Reality was {focus.get('worker_count_at_start', 'n/a')} workers at {format_real_time(focus['start_loop'], speed)} and {focus.get('worker_count_at_peak', 'n/a')} at the peak.{late_text} "
