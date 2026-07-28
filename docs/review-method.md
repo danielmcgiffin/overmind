@@ -4,12 +4,12 @@ The review is designed to identify causal failure cascades, not to produce a lea
 
 ## Diagnostic hierarchy
 
-1. **Outcome and state:** identify the result, participants, duration, and the largest observable state changes.
-2. **Turning point:** locate the first major state change that materially changes the player's options. This may be a negative engagement loss, but it can also be a favorable removal of the opponent's expensive core that creates the winning conversion window.
-3. **Preconditions:** inspect earlier harassment, worker/supply/resource state, production capacity, expansion/upgrade timing, and army composition.
-4. **Decision categories:** classify supported issues as strategic commitment, build/tech, economy/worker production, scouting/information, tactical engagement, reinforcement/disengagement, or mechanical execution.
-5. **Consequences:** identify later losses that follow from the turning point. Do not call every later event a new root cause.
-6. **Leverage rule:** give one or two concrete rules tied to a timestamp and an alternative decision.
+1. **Spending and float:** identify when meaningful unspent resources begin, how large and sustained the episode becomes, and whether the observed state points to supply, production, larva, technology, worker saturation, or an unknown constraint.
+2. **Supply and worker reality:** compare the bank to supply room, worker count, base count, and a replay-specific spending checkpoint. A worker count is not a goal by itself; it is useful only in relation to the infrastructure available to convert income.
+3. **Production and conversion:** determine what the bank could plausibly become after accounting for gas, supply, larva, tech, and known production structures. Queue state is treated as unavailable unless the replay proves it.
+4. **Reinforcement and combat:** inspect combat only when it creates a spending window, requires a replacement wave, or explains why resources remained unconverted. A favorable fight does not outrank a sustained bank merely because it decided the result.
+5. **Turning point and consequences:** locate the first major state change that materially changes the player's options. Distinguish the decisive spending/commitment error from later consequences.
+6. **Leverage rule:** give one measurable next-game trigger tied to the observed state and a feasible alternative decision.
 
 ## Facts versus inferences
 
@@ -60,6 +60,14 @@ For example, worker harassment is opponent-created damage. The player may still 
 - **Opponent-created damage:** killer attribution or ownership/loss evidence points to damage caused by the opponent.
 - **Self-inflicted damage:** the player's own observable commitment or state change is supported; label the conclusion as inference.
 
+## Spending episodes
+
+Resource float is reported as an episode rather than a list of high snapshots. A candidate episode begins when minerals reach 800 or gas reaches 500 and ends at the first later snapshot below both thresholds. It becomes meaningful when it is sustained for at least 160 loops, reaches at least 1,200 minerals or 800 gas, or otherwise has repeated state evidence. Each episode retains start/end/peak timestamps, worker and base counts, supply, known production structures, observed larva, technology resources, upgrades, fighting overlap, post-fight bank movement, a primary constraint label, and source snapshot references.
+
+The analyzer does not call a bank intentional merely because it is large. It avoids criticizing a named technology or expansion reserve when the corresponding in-progress or completion evidence supports that interpretation. “Production idle” is a candidate when known production exists alongside a large bank; complete queue state and attention are not replay-visible. No `attention_diversion` label is emitted from combat overlap alone.
+
+Unit-equivalent explanations are resource bounds, not simulated purchase orders. The report accounts for gas, supply room, observed larva, required tech, and known production structures, then distinguishes that bounded immediate upper limit from the larger resource-only equivalent.
+
 ## Coaching output
 
-The player-facing `review.md` is a compressed 250–500 word coaching output with no more than four conditional sections: `Verdict`, `Decisive sequence`, `What mattered`, and `Next-game rules`. It has one primary thesis, one decisive sequence, no more than three supporting findings, and no more than two rules. Each candidate finding passes a relevance gate: it must materially affect the result, explain the primary diagnosis, or be actionable in at least two of those three dimensions. The detailed timeline, tables, caveats, methodology, and source references belong in `evidence.md`, not in the coaching review. Advice must include an exact real elapsed timestamp, the observed state change, and a feasible alternative. “Macro better,” “make more workers,” and “take better fights” are not acceptable without that evidence.
+The player-facing `review.md` is a compressed 200–400 word coaching output with five default sections: `Spending verdict`, `Float timeline`, `Why the bank accumulated`, `What the bank should have become`, and `Next-game trigger`. It has one primary spending thesis, no more than three supporting findings, and one measurable trigger. Each candidate finding passes a relevance gate: it must materially affect the result, explain the primary diagnosis, or be actionable in at least two of those three dimensions. Every review includes a concise **Macro benchmark/reality** comparison: a replay-specific worker/saturation spending checkpoint versus actual workers, bank, and spending state. Detailed chronology, tables, caveats, methodology, and source references belong in `evidence.md`, not in the coaching review. Combat gets at most one short supporting paragraph unless it is itself the spending diagnosis.

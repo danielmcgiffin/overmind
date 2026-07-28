@@ -113,7 +113,7 @@ def render_evidence(extraction: dict[str, Any], derivation: dict[str, Any], enga
     elif turning.get("game_loop") is not None:
         assessment = turning.get("assessment") or {}
         turn = turning.get("engagement_id")
-        lines.append(f"The replay does not support calling the central combat sequence a tactical loss. The material favorable turn was **{turn} at {format_real_time(turning['game_loop'], speed)} real**: the reviewed player removed the opposing armored core according to killer-attributed tracker events. {assessment.get('summary', '')}")
+        lines.append(f"The replay does not support calling the central combat sequence a tactical loss. The material favorable turn was **{turn} at {format_real_time(turning['game_loop'], speed)} real**. {assessment.get('summary', '')}")
     else:
         lines.append("The replay did not provide enough spatially supported death data to identify a candidate decisive engagement. The report below separates what is known from what remains unavailable.")
     lines += ["", "## 3. Decisive turning point", ""]
@@ -156,6 +156,21 @@ def render_evidence(extraction: dict[str, Any], derivation: dict[str, Any], enga
     for flag in derivation.get("economy", {}).get("candidate_supply_blocks", []):
         if flag.get("player_id") == player_id:
             lines.append(f"- Candidate supply pressure at {format_real_time(flag['start_loop'], speed)} real: {flag['supply_used']} used / {flag['supply_available']} available across the next stats interval. This is not automatically an error.{_evidence(flag.get('evidence'))}")
+    float_episodes = [item for item in derivation.get("economy", {}).get("float_episodes", []) if item.get("player_id") == player_id]
+    lines += ["", "### Meaningful resource-float episodes", ""]
+    if float_episodes:
+        for episode in float_episodes:
+            purchase = episode.get("purchasing_power") or {}
+            purchase_text = "; ".join(
+                f"{unit_type}: resource bound {details.get('resource_bound')}, immediate upper bound {details.get('immediate_upper_bound')}, supply bound {details.get('supply_bound')}, larva bound {details.get('larva_bound')}, tech {details.get('tech_available')}"
+                for unit_type, details in sorted(purchase.items())
+            ) or "no bounded unit equivalent"
+            lines.append(
+                f"- {format_real_time(episode['start_loop'], speed)}–{format_real_time(episode['end_loop'], speed)} real ({format_real_time(episode.get('duration_loops', 0), speed)}): peak {episode.get('peak_minerals')} minerals / {episode.get('peak_gas')} gas at {format_real_time(episode['peak_loop'], speed)}; workers {episode.get('worker_count_at_start', 'n/a')}→{episode.get('worker_count_at_peak', 'n/a')}, bases {episode.get('base_count_at_peak', 'n/a')}, supply {_supply_text(episode.get('supply_at_peak'))}, tracked production capacity {episode.get('available_production_capacity', 'n/a')}, tracked larva {episode.get('available_larva', 'n/a')}; constraints {', '.join(episode.get('constraints') or ['unknown'])}; active fighting {episode.get('actively_fighting')}; bank spent after fighting {episode.get('bank_spent_after_active_fighting')}."
+            )
+            lines.append(f"  - Purchasing power: {purchase_text}. Upgrades already completed: {', '.join(episode.get('completed_upgrades_at_peak') or ['none decoded'])}. {_evidence(episode.get('evidence'))}")
+    else:
+        lines.append("- No meaningful float episode was detected; isolated threshold snapshots remain in structured economy facts.")
     lines.append("")
     lines.append("### Macro benchmarks and next-game targets")
     lines.append("")
@@ -259,115 +274,154 @@ def render_evidence(extraction: dict[str, Any], derivation: dict[str, Any], enga
     return "\n".join(lines) + "\n"
 
 
-def _passes_relevance_gate(*, material: bool, explains: bool, actionable: bool) -> bool:
-    """Keep a coaching finding only when at least two relevance questions pass."""
-    return sum((material, explains, actionable)) >= 2
-
-
-def _compact_kills(kills: dict[str, int]) -> str:
-    return ", ".join(f"{count} {unit_type}" for unit_type, count in sorted(kills.items())) or "the opposing units tracked in the cluster"
-
-
 def _supply_provider(race: str | None) -> str:
     return {"Zerg": "Overlord", "Protoss": "Pylon", "Terran": "Supply Depot"}.get(race or "", "supply provider")
 
 
-def _earlier_harassment(engagements: list[dict[str, Any]], turning_loop: int, player_id: int, speed: str) -> str:
-    earlier = sorted((item for item in engagements if item.get("start_loop", 0) < turning_loop), key=lambda item: item.get("start_loop", 0), reverse=True)
-    for engagement in earlier:
-        kills = engagement.get("kills_by_player", {}).get(str(player_id), {})
-        if kills:
-            own = engagement.get("losses_by_player", {}).get(str(player_id), {})
-            return f"Earlier, a small run at {format_real_time(engagement['start_loop'], speed)} cost {own.get('units', 0)} tracked units and killed {_compact_kills(kills)}."
-    return "No earlier spatially supported harassment was available before the main engagement."
+def _macro_benchmark_reality(derivation: dict[str, Any], player_id: int, extraction: dict[str, Any], speed: str) -> str:
+    snapshots = [item for item in derivation.get("player_snapshots", []) if item.get("player_id") == player_id]
+    if not snapshots:
+        return "**Macro benchmark/reality:** player-stat snapshots were unavailable, so worker and spending reality cannot be compared from this replay."
+    expansions = [item for item in derivation.get("timing", {}).get("expansions", []) if item.get("player_id") == player_id]
+    town_halls = len(expansions) + 1
+    benchmark_workers = town_halls * 15
+    peak = max(snapshots, key=lambda item: item.get("workers_active_count") or 0)
+    latest = snapshots[-1]
+    latest_bank = f"{latest.get('minerals_current', 'n/a')} minerals / {latest.get('vespene_current', 'n/a')} gas"
+    return (
+        f"**Macro benchmark/reality:** with {town_halls} tracked town halls, use roughly {benchmark_workers} workers as this replay's spending checkpoint. "
+        f"Reality was {peak.get('workers_active_count', 'n/a')} workers by {format_real_time(peak['game_loop'], speed)} and {latest.get('workers_active_count', 'n/a')} at {format_real_time(latest['game_loop'], speed)}, with a final bank of {latest_bank}; "
+        f"the economy was {'sufficient and spending was the bottleneck' if (latest.get('workers_active_count') or 0) >= benchmark_workers else 'below the replay benchmark and still needed worker growth'}."
+    )
+
+
+def _float_episode(derivation: dict[str, Any], player_id: int) -> dict[str, Any] | None:
+    episodes = [
+        item for item in derivation.get("economy", {}).get("float_episodes", [])
+        if item.get("player_id") == player_id and item.get("meaningful")
+    ]
+    return max(episodes, key=lambda item: ((item.get("peak_minerals") or 0) + (item.get("peak_gas") or 0), item.get("duration_loops") or 0), default=None)
+
+
+def _supply_text(supply: dict[str, Any] | None) -> str:
+    supply = supply or {}
+    used, available = supply.get("used"), supply.get("available")
+    if used is None or available is None:
+        return "supply unavailable"
+    room = max(0, float(available) - float(used))
+    room_text = str(int(room)) if room.is_integer() else f"{room:g}"
+    return f"{used}/{available} used, {room_text} free"
+
+
+def _float_constraint_text(episode: dict[str, Any]) -> str:
+    labels = episode.get("constraints") or ["unknown"]
+    explanations = {
+        "supply_blocked": "candidate supply pressure overlapped the episode",
+        "insufficient_production": "no tracked production structure was available at the peak",
+        "insufficient_larva": "the tracked larva pool was empty at the peak",
+        "production_idle": "candidate unused production capacity existed, although queue state is unavailable",
+        "tech_transition_bank": "resources were visibly committed to technology",
+        "overdroning": "the bank coexisted with worker growth beyond the spending checkpoint",
+        "attention_diversion": "attention diversion is not established by this replay",
+        "gas_imbalance": "the mineral bank was large while gas was comparatively scarce",
+        "mineral_imbalance": "gas accumulated while minerals were comparatively scarce",
+        "intentional_reserve": "a named reserve could be supported by the available evidence",
+        "unknown": "the replay cannot expose a single binding spending constraint",
+    }
+    supply = episode.get("supply_at_peak") or {}
+    if "supply_blocked" in labels and supply.get("used") is not None and supply.get("available") is not None:
+        if float(supply["available"]) - float(supply["used"]) > 2:
+            explanations["supply_blocked"] = "late candidate supply pressure appeared near the conversion window, but did not explain the whole earlier bank"
+    return "; ".join(f"{label}: {explanations.get(label, 'constraint classification unavailable')}" for label in labels)
+
+
+def _purchase_sentence(episode: dict[str, Any], player: dict[str, Any]) -> str:
+    purchases = episode.get("purchasing_power") or {}
+    if not purchases:
+        return "No bounded unit-equivalent purchase was available from the decoded race and state data."
+    phrases = []
+    plural = {"Roach": "Roaches", "Zergling": "Zerglings"}
+    for unit_type in ("Roach", "Zergling"):
+        purchase = purchases.get(unit_type)
+        if not purchase:
+            continue
+        resource_bound = purchase.get("resource_bound")
+        immediate = purchase.get("immediate_upper_bound")
+        if resource_bound is None:
+            continue
+        if immediate is None:
+            phrases.append(f"resources alone represented about {resource_bound} {plural[unit_type]}, but the immediate bound is unknown")
+        elif immediate == 0 and purchase.get("supply_bound") == 0:
+            phrases.append(f"resources alone represented about {resource_bound} {plural[unit_type]}, but the peak had no supply room")
+        else:
+            phrases.append(f"the bounded immediate upper limit was {immediate} {plural[unit_type]} (resource-only bound {resource_bound})")
+    if not phrases:
+        return "The bank could not be converted into a bounded unit equivalent without inventing missing tech or queue state."
+    return " and ".join(phrases) + "."
 
 
 def render_review(extraction: dict[str, Any], derivation: dict[str, Any], engagements: list[dict[str, Any]], diagnosis: dict[str, Any], player_id: int, config: AppConfig) -> str:
-    """Render the player-facing review after relevance filtering and compression."""
+    """Render the compressed, spending-first player-facing review."""
     speed = extraction["metadata"]["game_speed"]
     player = _player(extraction, player_id)
     player_name = _name(extraction, player_id)
-    decisive = diagnosis.get("decisive_candidate", {})
-    turning = diagnosis.get("turning_point_candidate", {})
-    decisive_engagement = next((item for item in engagements if item.get("engagement_id") == decisive.get("engagement_id")), None)
-    turning_engagement = next((item for item in engagements if item.get("engagement_id") == turning.get("engagement_id")), None)
-    opponent_disruptions = [item for item in derivation.get("economy", {}).get("resource_collection_disruptions", []) if item.get("player_id") != player_id]
+    macro_benchmark = _macro_benchmark_reality(derivation, player_id, extraction, speed)
+    episode = _float_episode(derivation, player_id)
     blocks = [item for item in derivation.get("economy", {}).get("candidate_supply_blocks", []) if item.get("player_id") == player_id]
-    snapshots = [item for item in derivation.get("player_snapshots", []) if item.get("player_id") == player_id]
-    floats = [item for item in derivation.get("economy", {}).get("candidate_resource_floats", []) if item.get("player_id") == player_id]
-    large_floats = [item for item in floats if (item.get("minerals") or 0) >= 1000 or (item.get("vespene") or 0) >= 500]
-    earlier_harassment = _earlier_harassment(engagements, (turning_engagement or {}).get("start_loop", 0), player_id, speed) if turning_engagement else ""
-    disruption_text = ""
-    if opponent_disruptions:
-        disruption = min(opponent_disruptions, key=lambda item: item.get("start_loop", 0))
-        disruption_text = f" The opponent's mineral collection rate then fell from {disruption.get('minerals_collection_rate_before')} to {disruption.get('minerals_collection_rate_after')} between {format_real_time(disruption['start_loop'], speed)} and {format_real_time(disruption['end_loop'], speed)}."
-
     lines = ["# Coaching Review", "", "Timestamps use real elapsed time.", ""]
-    if player.get("result") == "Win" and turning_engagement:
-        kills = turning_engagement.get("kills_by_player", {}).get(str(player_id), {})
-        own = turning_engagement.get("losses_by_player", {}).get(str(player_id), {})
-        lines += [
-            "## Verdict",
-            "",
-            f"{player_name} won. The primary lesson is conversion: the important fights were favorable, but the advantage was not closed as efficiently as it could have been. The correction is not to stop applying pressure; it is to make the next spending decision automatic once the opponent's core is gone.",
-            "",
-            "## Decisive sequence",
-            "",
-            f"At {format_real_time(turning_engagement['start_loop'], speed)}, the main engagement cost {own.get('units', 0)} of {player_name}'s units while the opposing cluster lost {_compact_kills(kills)}. {earlier_harassment}{disruption_text} That earlier pressure created real economic disruption; the main engagement was not a failed army fight.",
-            "",
-            "## What mattered",
-            "",
-        ]
-        findings = [
-            ("That exchange removed key high-value opposing units and opened the worker line; it should be treated as a winning transition, not a disaster. The fight produced the advantage you wanted.", True, True, True),
-            (f"By {format_real_time(large_floats[-1]['game_loop'], speed) if large_floats else 'the finish'}, the bank reached {large_floats[-1].get('minerals', 'n/a')} minerals and {large_floats[-1].get('vespene', 'n/a')} gas with roughly {snapshots[-1].get('workers_active_count', 'n/a') if snapshots else 'enough'} workers. The unused bank, not worker count, was the main macro leak.", bool(large_floats), True, True),
-            (f"Repeated cap pressure from {format_real_time(blocks[0]['start_loop'], speed)} to {format_real_time(blocks[-1]['start_loop'], speed)} made the follow-up less clean.", bool(blocks), True, True),
-        ]
-        selected = [text for text, material, explains, actionable in findings if _passes_relevance_gate(material=material, explains=explains, actionable=actionable)]
-        lines.extend(f"- {text}" for text in selected[:3])
-        lines += [
-            "",
-            "## Next-game rules",
-            "",
-            f"1. Queue the next {_supply_provider(player.get('race'))} about 15–20 real seconds before your repeated cap checkpoints; do not let supply friction interrupt the next wave.",
-            "2. After a favorable fight, spend immediately on the next army wave, production, or tech. At 1,000+ minerals, the bank is an alarm—not permission to add more workers.",
-        ]
-    elif decisive_engagement:
-        own = decisive_engagement.get("losses_by_player", {}).get(str(player_id), {})
-        kills = decisive_engagement.get("kills_by_player", {}).get(str(player_id), {})
-        lines += [
-            "## Verdict",
-            "",
-            f"The primary diagnosis is a tactical commitment failure at {format_real_time(decisive_engagement['start_loop'], speed)}: the game turned when the local fight became materially worse and continued to consume the army.",
-            "",
-            "## Decisive sequence",
-            "",
-            f"{decisive_engagement['engagement_id']} cost {own.get('units', 0)} tracked units while the opponent lost {_compact_kills(kills)}. The first losing position is the decision to correct; later reinforcements are consequences unless they independently improve the state.",
-            "",
-            "## What mattered",
-            "",
-        ]
-        candidates = []
-        if opponent_disruptions:
-            disruption = min(opponent_disruptions, key=lambda item: item.get("start_loop", 0))
-            candidates.append((f"Opponent pressure preceded the fight: collection changed from {disruption.get('minerals_collection_rate_before')} to {disruption.get('minerals_collection_rate_after')} between {format_real_time(disruption['start_loop'], speed)} and {format_real_time(disruption['end_loop'], speed)}.", True, True, True))
-        candidates.append(("The actionable error was allowing the commitment to continue after the local exchange stopped improving.", True, True, True))
-        lines.extend(f"- {text}" for text, material, explains, actionable in candidates if _passes_relevance_gate(material=material, explains=explains, actionable=actionable))
-        lines += ["", "## Next-game rules", "", f"1. At {format_real_time(decisive_engagement['start_loop'], speed)}, use a disengagement trigger: if the fight is not improving, stop feeding it and rebuild.", "2. Protect the economy after harassment; make the recovery plan explicit before committing the next army wave."]
+
+    lines += ["## Spending verdict", ""]
+    if episode:
+        worker_count = episode.get("worker_count_at_peak")
+        starting_workers = episode.get("worker_count_at_start", worker_count)
+        base_count = episode.get("base_count_at_peak")
+        benchmark = base_count * 15 if base_count else None
+        if worker_count is not None and benchmark is not None and worker_count >= benchmark:
+            timing_phrase = "after" if starting_workers >= benchmark else "before, then remained present after"
+            lines.append(f"This was not an income problem for {player_name}. The bank became meaningful {timing_phrase} the replay's {benchmark}-worker checkpoint, so the recurring lesson is resource conversion: turn income into supply, production, and army before adding more economy.")
+        else:
+            lines.append(f"{player_name} had a meaningful spending problem, but the bank appeared before a clean worker-saturation checkpoint. The next correction is to stabilize production and supply while growing workers toward the replay's base count, instead of letting the bank become idle resources.")
     else:
-        lines += [
-            "## Verdict",
-            "",
-            f"The replay does not contain enough spatially supported evidence for a confident decisive-failure diagnosis for {player_name}.",
-            "",
-            "## What mattered",
-            "",
-            "The available facts should be treated as incomplete rather than converted into invented intent or generic advice.",
-            "",
-            "## Next-game rules",
-            "",
-            "1. Review the first position-supported engagement before changing the build.",
-        ]
+        lines.append(f"No sustained meaningful float episode was decoded for {player_name}; this replay does not support blaming a large unspent bank. The review should focus on the next highest-ranked constraint in the evidence layer.")
+    lines.append(macro_benchmark)
+
+    lines += ["", "## Float timeline", ""]
+    if episode:
+        lines.append(
+            f"The main episode ran from {format_real_time(episode['start_loop'], speed)} to {format_real_time(episode['end_loop'], speed)} real ({format_real_time(episode.get('duration_loops', 0), speed)}), peaking at {episode.get('peak_minerals')} minerals / {episode.get('peak_gas')} gas at {format_real_time(episode['peak_loop'], speed)}. "
+            f"At the peak: {episode.get('worker_count_at_start', 'n/a')}→{episode.get('worker_count_at_peak', 'n/a')} workers, {episode.get('base_count_at_peak', 'n/a')} bases, {_supply_text(episode.get('supply_at_peak'))}, {episode.get('available_production_capacity', 'n/a')} tracked production capacity, and {episode.get('available_larva', 'n/a')} tracked larva."
+        )
+    else:
+        lines.append("No meaningful episode met the analyzer's sustained-or-large threshold; isolated high-bank snapshots remain in evidence.md.")
+
+    lines += ["", "## Why the bank accumulated", ""]
+    if episode:
+        cause = _float_constraint_text(episode)
+        lines.append(f"Primary constraint: **{episode.get('primary_constraint', 'unknown')}**. {cause}. This is a candidate diagnosis: complete queue state and player attention are not replay-visible.")
+        if episode.get("actively_fighting"):
+            spent = "did" if episode.get("bank_spent_after_active_fighting") else "did not"
+            post_fight = "the next snapshot shows a substantial bank conversion" if spent == "did" else "no later snapshot proves a substantial bank conversion"
+            lines.append(f"The episode overlaps {episode.get('active_fighting_event_count')} tracked deaths; {post_fight} after that fighting window.")
+    elif blocks:
+        lines.append("Supply pressure was detected, but no sustained bank episode was large enough to explain the result by itself.")
+    else:
+        lines.append("The replay does not expose enough sustained resource or queue evidence to classify a spending constraint.")
+
+    lines += ["", "## What the bank should have become", ""]
+    if episode:
+        lines.append(f"{_purchase_sentence(episode, player)} The actionable conversion was a named purchase sequence, not a generic command to macro: clear supply first when capped, then spend the bank through the observed tech/larva/production limits."
+        )
+    else:
+        lines.append("Use the next verified bank threshold as the conversion point: spend on the next production, tech, or army purchase before taking another worker or moving the army.")
+
+    lines += ["", "## Next-game trigger", ""]
+    if episode and episode.get("primary_constraint") == "supply_blocked":
+        trigger = f"After reaching the replay's worker checkpoint, when the bank hits 800 minerals, queue the next {_supply_provider(player.get('race'))} if fewer than two supply slots remain; otherwise spend the bank before adding another worker."
+    elif episode:
+        trigger = "When the bank reaches 800 minerals after the replay's worker checkpoint, add or use production immediately; after a fight ends, spend before watching the army move."
+    else:
+        trigger = "At 800 minerals, name the purchase you are saving for; otherwise spend it immediately on production, tech, or the next army wave."
+    lines.append(f"1. {trigger}")
     return "\n".join(lines) + "\n"
 
 

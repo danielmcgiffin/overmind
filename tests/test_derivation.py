@@ -98,3 +98,33 @@ def test_zerg_drone_events_are_decomposed_against_worker_consuming_buildings():
     assert summary["zerg_structure_starts"] == 1
     assert summary["estimated_construction_consumed"] == 1
     assert summary["estimated_worker_losses"] == 0
+
+
+def test_resource_float_is_grouped_and_bounded_by_state():
+    extraction = _extraction()
+    extraction["tracker_events"] = [
+        event for event in extraction["tracker_events"]
+        if not (event.get("event_type") == "PlayerStats" and event.get("player_id") == 1)
+    ]
+    extraction["tracker_events"].extend(
+        [
+            _event("float-1", "PlayerStats", 480, player_id=1, stats={"workers_active_count": 30, "food_used": 60, "food_made": 80, "minerals_current": 700, "vespene_current": 100}),
+            _event("float-2", "PlayerStats", 640, player_id=1, stats={"workers_active_count": 35, "food_used": 80, "food_made": 80, "minerals_current": 900, "vespene_current": 500}),
+            _event("float-3", "PlayerStats", 800, player_id=1, stats={"workers_active_count": 40, "food_used": 100, "food_made": 100, "minerals_current": 1500, "vespene_current": 600}),
+            _event("float-4", "PlayerStats", 1200, player_id=1, stats={"workers_active_count": 42, "food_used": 100, "food_made": 120, "minerals_current": 1300, "vespene_current": 550}),
+            _event("float-5", "PlayerStats", 1400, player_id=1, stats={"workers_active_count": 42, "food_used": 100, "food_made": 120, "minerals_current": 400, "vespene_current": 100}),
+        ]
+    )
+    facts = derive_facts(extraction)
+    episodes = [item for item in facts["economy"]["float_episodes"] if item["player_id"] == 1]
+    assert len(episodes) == 1
+    episode = episodes[0]
+    assert episode["start_loop"] == 640
+    assert episode["end_loop"] == 1400
+    assert episode["peak_loop"] == 800
+    assert episode["peak_minerals"] == 1500
+    assert episode["primary_constraint"] == "supply_blocked"
+    assert episode["purchasing_power"]["Roach"]["resource_bound"] == 20
+    assert episode["purchasing_power"]["Roach"]["supply_bound"] == 0
+    assert episode["purchasing_power"]["Roach"]["immediate_upper_bound"] is None
+    assert episode["meaningful"] is True

@@ -35,12 +35,14 @@ The default output is written below `output/<replay-content-hash>/`. The replay 
 
 Each analysis bundle contains:
 
-- `review.md` — 250–500 word coaching review with no more than four sections.
+- `review.md` — 200–400 word spending-first coaching review with a float timeline and one measurable trigger.
 - `evidence.md` — detailed timeline, tables, caveats, methodology, and source references.
 - `replay.json`, `timeline.csv`, `engagements.json`, and `findings.json` — complete structured evidence.
 - `report.md` — compatibility index linking the separated outputs.
 
 All player-facing timestamps use real elapsed time. Raw game loops remain the canonical internal coordinate.
+
+The default coaching lens is spending and resource conversion: meaningful float episodes, supply room, worker/base benchmarks, production capacity, larva when observable, and bounded purchase equivalents. Combat is included in the short review only when it explains a spending window or replacement need.
 
 For a shareable checkout, commit the source, documentation, tests, `pyproject.toml`, and `uv.lock`. Do not commit `.venv`, `.cache`, `output`, or replay files; those are local and are ignored by Git.
 
