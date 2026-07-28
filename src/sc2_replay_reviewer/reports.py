@@ -316,10 +316,17 @@ def _macro_benchmark_reality(derivation: dict[str, Any], player_id: int, extract
         if late_expansions:
             completion_text = ", ".join(f"{item.get('unit_type')} at {format_real_time(item['game_loop'], speed)} real" for item in late_expansions)
             late_text = f" Additional town halls completed later at {completion_text}."
+        else:
+            late_text = " No later expansion transition was needed; this was already the relevant base count for the episode."
+        state_text = (
+            "this supports an extended commitment before a late expansion transition"
+            if late_expansions
+            else "this supports a saturated three-base economy with spending and production as the bottleneck"
+        )
         return (
             f"**Macro benchmark/reality:** the main float occurred on {focus_bases} bases, so roughly {focus_benchmark} workers was the relevant spending checkpoint. "
             f"Reality was {focus.get('worker_count_at_start', 'n/a')} workers at {format_real_time(focus['start_loop'], speed)} and {focus.get('worker_count_at_peak', 'n/a')} at the peak.{late_text} "
-            f"The final state was {latest.get('workers_active_count', 'n/a')} workers against a {final_benchmark}-worker checkpoint for {final_bases} bases, with a final bank of {latest_bank}; this supports an extended two-base commitment followed by a late expansion transition."
+            f"The final state was {latest.get('workers_active_count', 'n/a')} workers against a {final_benchmark}-worker checkpoint for {final_bases} bases, with a final bank of {latest_bank}; {state_text}."
         )
     expansions = _expansions_for_player(derivation, player_id)
     town_halls = len(expansions) + 1
