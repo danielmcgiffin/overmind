@@ -11,3 +11,10 @@ directory = ""
 primary_time = "real"
 show_real_time = false
 tone = "direct"
+
+[sc2replaystats]
+# Optional read-only enrichment. The credential is never stored here.
+enabled = true
+base_url = "https://api.sc2replaystats.com"
+auth_env = "SC2REPLAYSTATS_AUTH"
+cache_ttl_seconds = 900

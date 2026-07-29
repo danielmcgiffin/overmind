@@ -113,4 +113,29 @@ def test_evidence_report_keeps_timeline_and_audit_sections():
     assert "## 14. Evidence appendix" in evidence
     assert "Evidence methodology and limitations" in evidence
     assert "tracker:5" in evidence
+
+
+def test_evidence_report_keeps_external_data_separate():
+    extraction, derivation, engagements, diagnosis, timeline = _bundle()
+    evidence = render_evidence(
+        extraction,
+        derivation,
+        engagements,
+        diagnosis,
+        timeline,
+        1,
+        AppConfig(),
+        {
+            "status": "matched_metadata",
+            "cache_reused": False,
+            "base_url": "https://api.example.test",
+            "auth_env": "SC2REPLAYSTATS_AUTH",
+            "match": {"status": "matched_metadata", "confidence": "medium"},
+            "replay_id": 42,
+            "remote": {"replay": {"spending_quotient": 111}},
+        },
+    )
+    assert "Sc2ReplayStats supplemental data" in evidence
+    assert "Raw response is preserved in `sc2replaystats.json`" in evidence
+    assert "SC2REPLAYSTATS_AUTH" in evidence
     assert "Meaningful resource-float episodes" in evidence

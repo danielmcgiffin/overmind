@@ -109,7 +109,39 @@ def _macro_guidance(derivation: dict[str, Any], player_id: int, speed: str) -> l
     return lines
 
 
-def render_evidence(extraction: dict[str, Any], derivation: dict[str, Any], engagements: list[dict[str, Any]], diagnosis: dict[str, Any], timeline: list[dict[str, Any]], player_id: int, config: AppConfig) -> str:
+def _render_external_evidence(external: dict[str, Any] | None) -> list[str]:
+    if not external:
+        return []
+    lines = [
+        "## 1.5. Sc2ReplayStats supplemental data",
+        "",
+        f"- Pull status: **{external.get('status', 'unavailable')}**; cache reused: `{external.get('cache_reused', False)}`.",
+        f"- Source: `{external.get('base_url', 'unavailable')}`; authentication is read from environment variable `{external.get('auth_env', 'unavailable')}` and is never written to this report.",
+        "- This is external account data, not a replacement for the local s2protocol extraction. It is kept separate from replay facts and coaching inferences.",
+    ]
+    if external.get("match"):
+        lines.append(f"- Local-file match assessment: `{external['match'].get('status')}` with `{external['match'].get('confidence')}` confidence.")
+    if external.get("replay_id") is not None:
+        lines.append(f"- Remote replay identifier: `{external['replay_id']}`.")
+    if external.get("message"):
+        lines.append(f"- Note: {external['message']}.")
+    if external.get("error"):
+        lines.append(f"- Pull error: {external['error']}.")
+    if external.get("remote") is not None:
+        lines.append("- Raw response is preserved in `sc2replaystats.json`; no external metric is promoted into the coaching review without a verified field mapping.")
+    return lines
+
+
+def render_evidence(
+    extraction: dict[str, Any],
+    derivation: dict[str, Any],
+    engagements: list[dict[str, Any]],
+    diagnosis: dict[str, Any],
+    timeline: list[dict[str, Any]],
+    player_id: int,
+    config: AppConfig,
+    external: dict[str, Any] | None = None,
+) -> str:
     metadata = extraction["metadata"]
     player = _player(extraction, player_id)
     decisive = diagnosis.get("decisive_candidate", {})
@@ -129,6 +161,9 @@ def render_evidence(extraction: dict[str, Any], derivation: dict[str, Any], enga
         "## 2. Executive diagnosis",
         "",
     ]
+    external_lines = _render_external_evidence(external)
+    if external_lines:
+        lines[8:8] = external_lines + [""]
     if decisive_loop is not None:
         if player.get("result") == "Win":
             lines.append(f"The game was a win, but the largest avoidable danger was **{decisive.get('engagement_id')} at {format_real_time(decisive_loop, speed)} real**. The strongest supported coaching diagnosis is a tactical commitment problem; later reinforcement continuation is treated as a consequence unless earlier evidence shows otherwise.")

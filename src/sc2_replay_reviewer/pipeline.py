@@ -14,6 +14,7 @@ from .engagements import detect_engagements
 from .parser import extract_replay
 from .reports import render_evidence, render_report, render_review
 from .review import build_diagnostic
+from .sc2replaystats import pull_for_replay
 from .schema import cache_is_usable, validate_extraction
 from .serialization import read_json, sha256_file, write_json
 from .time import format_real_time
@@ -102,12 +103,25 @@ def timeline_csv(rows: list[dict[str, Any]]) -> str:
     return output.getvalue()
 
 
-def analyze(path: Path, root: Path, player_id: int, config: AppConfig) -> dict[str, Any]:
+def analyze(
+    path: Path,
+    root: Path,
+    player_id: int,
+    config: AppConfig,
+    *,
+    force_sc2replaystats: bool = False,
+) -> dict[str, Any]:
     extraction, cache_reused = load_or_extract(path, root)
     derivation = derive_facts(extraction)
     engagements = detect_engagements(derivation)
     diagnosis = build_diagnostic(extraction, derivation, engagements, player_id)
     timeline = _timeline(extraction, derivation, engagements, player_id)
+    external = pull_for_replay(
+        extraction,
+        root,
+        config.sc2replaystats,
+        force_refresh=force_sc2replaystats,
+    )
     replay_hash = extraction["replay_hash"]
     output_dir = root / "output" / replay_hash
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -115,7 +129,8 @@ def analyze(path: Path, root: Path, player_id: int, config: AppConfig) -> dict[s
     (output_dir / "timeline.csv").write_text(timeline_csv(timeline), encoding="utf-8")
     write_json(output_dir / "engagements.json", {"schema_version": extraction["schema_version"], "engagements": engagements})
     write_json(output_dir / "findings.json", diagnosis)
-    (output_dir / "evidence.md").write_text(render_evidence(extraction, derivation, engagements, diagnosis, timeline, player_id, config), encoding="utf-8")
+    write_json(output_dir / "sc2replaystats.json", external)
+    (output_dir / "evidence.md").write_text(render_evidence(extraction, derivation, engagements, diagnosis, timeline, player_id, config, external), encoding="utf-8")
     (output_dir / "review.md").write_text(render_review(extraction, derivation, engagements, diagnosis, player_id, config), encoding="utf-8")
     (output_dir / "report.md").write_text(render_report(extraction, derivation, engagements, diagnosis, timeline, player_id, config), encoding="utf-8")
     metadata = {
@@ -126,6 +141,13 @@ def analyze(path: Path, root: Path, player_id: int, config: AppConfig) -> dict[s
         "analysis_rule_version": ANALYSIS_RULE_VERSION,
         "date_analyzed": datetime.now(timezone.utc).isoformat(),
         "cached_extraction_reused": cache_reused,
+        "external_sources": {
+            "sc2replaystats": {
+                "status": external.get("status"),
+                "cache_reused": external.get("cache_reused", False),
+                "auth_env": external.get("auth_env"),
+            }
+        },
         "primary_report_time": config.report.primary_time,
         "time_note": "All user-facing timestamps are real elapsed time calculated from game loops and the replay speed factor.",
     }
@@ -139,6 +161,7 @@ def analyze(path: Path, root: Path, player_id: int, config: AppConfig) -> dict[s
         "engagements": engagements,
         "diagnosis": diagnosis,
         "timeline": timeline,
+        "sc2replaystats": external,
     }
 
 

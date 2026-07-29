@@ -7,3 +7,5 @@ Reuse existing commands, the canonical time utilities, normalized schemas, cache
 Keep facts extracted from replay events and snapshots separate from strategic interpretations. Every derived finding must retain evidence references, and every coaching conclusion must be labeled as a conclusion or inference rather than presented as a replay fact. Preserve raw event evidence needed to audit reports.
 
 Run the relevant tests and an end-to-end `./sc2review analyze ...` validation before handing off changes. Update `PROJECT_STATE.md` when parser behavior, supported builds, schemas, commands, or known limitations change.
+
+The optional Sc2ReplayStats integration is supplemental only. Read its credential from the configured environment variable; never put authorization values in tracked files, output, cache metadata, logs, or commits. Keep external API payloads separate from local replay facts and strategic interpretations, and verify response field semantics before using them in coaching conclusions.

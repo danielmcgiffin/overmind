@@ -1,6 +1,6 @@
 # Project state
 
-Last updated: 2026-07-28
+Last updated: 2026-07-29
 
 ## Architecture
 
@@ -11,6 +11,7 @@ The project is a local Python package exposed through `./sc2review` and `uv run 
 3. `engagements.py` clusters deaths using both game-loop proximity and map position, then computes local losses, pre/post state, and approximate reinforcement observations.
 4. `review.py` generates structured facts and explicitly labeled inferences, including candidate negative turning points, favorable transitions, and a causal chain. Killer-attributed losses are retained per engagement so cheap-unit trades are not automatically labeled failures.
 5. `reports.py` writes the concise spending-first `review.md`, the detailed audit `evidence.md`, and a compatibility `report.md` index; `pipeline.py` handles the content-hash cache and replay-specific outputs.
+6. `sc2replaystats.py` optionally pulls the account's latest remote replay as supplemental external data. It uses the documented HTTPS API, caches by local replay hash, and never merges remote payloads into canonical extraction facts or coaching inferences.
 
 The canonical internal model is JSON-compatible dictionaries with stable evidence IDs. Parser-specific dictionaries are retained only inside each normalized event's `payload` for auditability; downstream code uses normalized top-level fields. The current derivation facts version is `1.2`, including float start-bank fields, float episodes, and bounded purchase power.
 
@@ -29,6 +30,7 @@ The canonical internal model is JSON-compatible dictionaries with stable evidenc
 ```bash
 ./sc2review bootstrap
 ./sc2review analyze "/path/to/game.SC2Replay" --player "ExactName"
+./sc2review analyze "/path/to/game.SC2Replay" --player "ExactName" --refresh-sc2replaystats
 uv run sc2review analyze "/path/to/game.SC2Replay" --player "ExactName"
 ./sc2review inspect "/path/to/game.SC2Replay"
 ./sc2review timeline "/path/to/game.SC2Replay" --player "ExactName"
@@ -36,7 +38,7 @@ uv run sc2review analyze "/path/to/game.SC2Replay" --player "ExactName"
 ./sc2review validate "/path/to/game.SC2Replay"
 ```
 
-The normal analyze command writes `output/<sha256>/replay.json`, `timeline.csv`, `engagements.json`, `findings.json`, `review.md`, `evidence.md`, `report.md`, and `run-metadata.json`. `review.md` is a 200–400 word spending-first coaching output with five default sections; `evidence.md` owns the detailed audit trail. Normalized extraction is cached under `.cache/sc2review/<sha256>/replay.json` and is reused only when its replay hash, schema version, and parser version still match.
+The normal analyze command writes `output/<sha256>/replay.json`, `timeline.csv`, `engagements.json`, `findings.json`, `sc2replaystats.json`, `review.md`, `evidence.md`, `report.md`, and `run-metadata.json`. `review.md` is a 200–400 word spending-first coaching output with five default sections; `evidence.md` owns the detailed audit trail. Normalized extraction is cached under `.cache/sc2review/<sha256>/replay.json` and is reused only when its replay hash, schema version, and parser version still match. Optional external responses are cached under `.cache/sc2replaystats/<sha256>/` with a 15-minute default TTL.
 
 Replay lookup is persistent but user-local: set `[replays].directory` in `config.toml`, then pass a filename. An explicit path or `--replay-dir` overrides it. The shareable config template intentionally leaves the directory empty.
 
@@ -90,6 +92,8 @@ The named licensed fixture was not mounted. An auxiliary local replay with base 
 - Every `review.md` includes a concise Macro benchmark/reality comparison: a replay-specific worker/saturation spending checkpoint versus the actual worker count, bank, and spending state.
 - Macro benchmarks are time-aware: a late base does not retroactively raise the worker checkpoint for an earlier float episode. Reviews explicitly identify late expansion transitions that turn pressure into an unintended two-base commitment.
 - Spending episodes are the primary coaching object. The report ranks float and conversion before supply, worker saturation, production/larva, reinforcement continuity, technology, and combat.
+- External API payloads are supplemental evidence only. Until response fields are mapped and versioned, they remain in `sc2replaystats.json` and the evidence report rather than changing coaching conclusions.
 - `evidence.md` is the canonical human-readable audit report. `report.md` is retained as a compatibility index so existing consumers can find the separated outputs without receiving the verbose evidence by default.
 - The repository package excludes `.SC2Replay` files, output/cache/virtual-environment directories, and local `.agents`/`.codex` metadata. Replay locations are configured by the consumer in `config.toml` or per command with `--replay-dir`; no personal replay path is part of the shareable source.
 - `s2protocol` remains authoritative; sc2reader must not silently become the internal data model.
+- Sc2ReplayStats integration is read-only and optional. It reads `SC2REPLAYSTATS_AUTH` (or the configured environment-variable name), calls `/account/last-replay` and optional replay detail, and degrades non-fatally when credentials, network, or matching data are unavailable. The key is never stored in the repository or output.

@@ -25,10 +25,21 @@ class ReplayConfig:
 
 
 @dataclass(frozen=True)
+class Sc2ReplayStatsConfig:
+    """Optional read-only enrichment from the user's Sc2ReplayStats account."""
+
+    enabled: bool = True
+    base_url: str = "https://api.sc2replaystats.com"
+    auth_env: str = "SC2REPLAYSTATS_AUTH"
+    cache_ttl_seconds: int = 900
+
+
+@dataclass(frozen=True)
 class AppConfig:
     player: PlayerConfig = PlayerConfig()
     report: ReportConfig = ReportConfig()
     replays: ReplayConfig = ReplayConfig()
+    sc2replaystats: Sc2ReplayStatsConfig = Sc2ReplayStatsConfig()
 
 
 def load_config(path: Path) -> AppConfig:
@@ -43,6 +54,7 @@ def load_config(path: Path) -> AppConfig:
     player = raw.get("player", {})
     report = raw.get("report", {})
     replays = raw.get("replays", {})
+    sc2replaystats = raw.get("sc2replaystats", {})
     replay_directory = replays.get("directory")
     directory = None
     if replay_directory:
@@ -60,4 +72,10 @@ def load_config(path: Path) -> AppConfig:
             tone=str(report.get("tone", "direct")),
         ),
         replays=ReplayConfig(directory=directory),
+        sc2replaystats=Sc2ReplayStatsConfig(
+            enabled=bool(sc2replaystats.get("enabled", True)),
+            base_url=str(sc2replaystats.get("base_url", "https://api.sc2replaystats.com")).rstrip("/"),
+            auth_env=str(sc2replaystats.get("auth_env", "SC2REPLAYSTATS_AUTH")),
+            cache_ttl_seconds=max(0, int(sc2replaystats.get("cache_ttl_seconds", 900))),
+        ),
     )

@@ -38,9 +38,29 @@ Each analysis bundle contains:
 - `review.md` — 200–400 word spending-first coaching review with a float timeline and one measurable trigger.
 - `evidence.md` — detailed timeline, tables, caveats, methodology, and source references.
 - `replay.json`, `timeline.csv`, `engagements.json`, and `findings.json` — complete structured evidence.
+- `sc2replaystats.json` — optional raw supplemental data pulled from the configured Sc2ReplayStats account.
 - `report.md` — compatibility index linking the separated outputs.
 
 All player-facing timestamps use real elapsed time. Raw game loops remain the canonical internal coordinate.
+
+## Optional Sc2ReplayStats enrichment
+
+The analyzer can pull the account's latest replay from Sc2ReplayStats on each analysis. This is read-only enrichment: Blizzard's local `s2protocol` extraction remains authoritative, and external data is kept separate in `sc2replaystats.json` and the evidence report.
+
+Set the authorization value in the environment using the variable named by `[sc2replaystats].auth_env`; do not put the key in `config.toml`, source code, reports, or Git:
+
+```bash
+export SC2REPLAYSTATS_AUTH='hash;token;timestamp'
+./sc2review analyze "game.SC2Replay" --player "PlayerName"
+```
+
+The API response is cached under `.cache/sc2replaystats/<replay-hash>/` for the configured TTL. Force a fresh pull with:
+
+```bash
+./sc2review analyze "game.SC2Replay" --player "PlayerName" --refresh-sc2replaystats
+```
+
+If the credential is absent, the service is unavailable, or the remote latest replay cannot be confidently matched to the local file, local analysis still completes and records the external status as `not_configured`, `error`, or `latest_remote_unverified`.
 
 The default coaching lens is spending and resource conversion: meaningful float episodes, supply room, worker/base benchmarks, production capacity, larva when observable, and bounded purchase equivalents. Combat is included in the short review only when it explains a spending window or replacement need.
 

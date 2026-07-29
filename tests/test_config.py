@@ -25,3 +25,17 @@ def test_explicit_replay_path_takes_precedence_over_configured_directory(tmp_pat
     explicit.write_bytes(b"fixture")
 
     assert _path(str(explicit), configured) == explicit.resolve()
+
+
+def test_sc2replaystats_config_uses_environment_secret_name(tmp_path: Path):
+    config_path = tmp_path / "config.toml"
+    config_path.write_text(
+        "[sc2replaystats]\nenabled = true\nauth_env = \"MY_SC2_STATS_KEY\"\ncache_ttl_seconds = 60\n",
+        encoding="utf-8",
+    )
+
+    config = load_config(config_path)
+
+    assert config.sc2replaystats.enabled is True
+    assert config.sc2replaystats.auth_env == "MY_SC2_STATS_KEY"
+    assert config.sc2replaystats.cache_ttl_seconds == 60

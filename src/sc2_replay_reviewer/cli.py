@@ -51,6 +51,8 @@ def _parser() -> argparse.ArgumentParser:
             child.add_argument("--player", help="Exact replay participant name")
         child.add_argument("--config", type=Path, default=None, help="TOML config path (default: project config.toml)")
         child.add_argument("--replay-dir", type=Path, default=None, help="Override the configured replay directory")
+        if command == "analyze":
+            child.add_argument("--refresh-sc2replaystats", action="store_true", help="Ignore the external stats cache and pull again")
         child.add_argument("--root", type=Path, default=None, help=argparse.SUPPRESS)
     return parser
 
@@ -91,10 +93,17 @@ def main(argv: list[str] | None = None) -> int:
             return 0
         if args.command == "analyze":
             player = resolve_player(extraction, args.player, config.player.name)
-            result = analyze(replay_path, root, player["player_id"], config)
+            result = analyze(
+                replay_path,
+                root,
+                player["player_id"],
+                config,
+                force_sc2replaystats=args.refresh_sc2replaystats,
+            )
             print(f"Analysis written to {result['output_dir']}")
             print(f"Replay hash: {result['replay_hash']}")
             print(f"Cached extraction reused: {result['cache_reused']}")
+            print(f"Sc2ReplayStats pull: {result['sc2replaystats']['status']} (cached: {result['sc2replaystats']['cache_reused']})")
             return 0
     except ReplayReviewError as exc:
         print(f"sc2review: {exc}", file=sys.stderr)
