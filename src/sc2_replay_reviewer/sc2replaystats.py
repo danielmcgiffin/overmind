@@ -1,4 +1,4 @@
-"""Read-only Sc2ReplayStats enrichment with secret-safe local caching.
+"""Sc2ReplayStats pull and upload integration with secret-safe local caching.
 
 The local s2protocol extraction remains authoritative. This module stores the
 remote response as supplemental external data and never merges it into the
@@ -10,6 +10,7 @@ from __future__ import annotations
 import html
 import json
 import os
+import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Callable
@@ -18,12 +19,14 @@ from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
 from .config import Sc2ReplayStatsConfig
-from .serialization import read_json, write_json
+from .serialization import read_json, sha256_file, write_json
 
 
 EXTERNAL_SCHEMA_VERSION = "1.0"
 SOURCE_NAME = "sc2replaystats"
+UPLOAD_STATE_SCHEMA_VERSION = "1.0"
 DEFAULT_LAST_REPLAY_PATH = "/account/last-replay"
+DEFAULT_UPLOAD_PATH = "/replay"
 DEFAULT_REPLAY_INCLUDES = ("players", "account", "players-replay-info", "map")
 
 
@@ -137,10 +140,13 @@ class Sc2ReplayStatsClient:
             headers={
                 "Accept": "application/json",
                 "Authorization": self.authorization,
-                "User-Agent": "sc2-replay-reviewer/0.2.0",
+                "User-Agent": "sc2-replay-reviewer/0.3.0",
             },
             method="GET",
         )
+        return self._request_json(request)
+
+    def _request_json(self, request: Request) -> Any:
         try:
             with self.opener(request, timeout=self.timeout_seconds) as response:
                 body = response.read()
@@ -155,6 +161,38 @@ class Sc2ReplayStatsClient:
             return json.loads(decoded) if decoded else {}
         except (TypeError, ValueError) as exc:
             raise Sc2ReplayStatsError("Sc2ReplayStats returned a non-JSON response") from exc
+
+    def post_replay(self, replay_path: Path, upload_method: str = "standalone") -> dict[str, Any]:
+        """Upload one replay using the documented multipart `/replay` endpoint."""
+
+        boundary = f"sc2review-{os.urandom(12).hex()}"
+        filename = replay_path.name.replace('"', "'")
+        replay_bytes = replay_path.read_bytes()
+        chunks = [
+            f"--{boundary}\r\n".encode(),
+            f'Content-Disposition: form-data; name="replay_file"; filename="{filename}"\r\n'.encode(),
+            b"Content-Type: application/octet-stream\r\n\r\n",
+            replay_bytes,
+            b"\r\n",
+            f"--{boundary}\r\n".encode(),
+            b'Content-Disposition: form-data; name="upload_method"\r\n\r\n',
+            upload_method.encode("utf-8"),
+            b"\r\n",
+            f"--{boundary}--\r\n".encode(),
+        ]
+        request = Request(
+            f"{self.base_url}{DEFAULT_UPLOAD_PATH}",
+            data=b"".join(chunks),
+            headers={
+                "Accept": "application/json",
+                "Authorization": self.authorization,
+                "Content-Type": f"multipart/form-data; boundary={boundary}",
+                "User-Agent": "sc2-replay-reviewer/0.3.0",
+            },
+            method="POST",
+        )
+        response = self._request_json(request)
+        return {"response": response, "queue_id": _first_queue_identifier(response)}
 
     def pull_latest_replay(self) -> dict[str, Any]:
         latest = self.get(DEFAULT_LAST_REPLAY_PATH)
@@ -177,6 +215,133 @@ class Sc2ReplayStatsClient:
         if detail_error:
             result["detail_error"] = detail_error
         return result
+
+
+def _first_queue_identifier(value: Any) -> str | int | None:
+    identifier_keys = {"replay_queue_id", "queue_id", "replayqueueid", "queueid"}
+    for item in _walk(value):
+        for key, candidate in item.items():
+            if key.casefold() in identifier_keys and isinstance(candidate, (str, int)):
+                return candidate
+    return _first_identifier(value)
+
+
+def _upload_state_path(root: Path) -> Path:
+    return root / ".cache" / SOURCE_NAME / "upload-state.json"
+
+
+def _load_upload_state(root: Path) -> dict[str, Any]:
+    path = _upload_state_path(root)
+    if path.exists():
+        try:
+            state = read_json(path)
+            if state.get("schema_version") == UPLOAD_STATE_SCHEMA_VERSION and isinstance(state.get("files"), dict):
+                return state
+        except (OSError, ValueError, TypeError):
+            pass
+    return {"schema_version": UPLOAD_STATE_SCHEMA_VERSION, "files": {}}
+
+
+def _upload_result(status: str, directory: Path, **extra: Any) -> dict[str, Any]:
+    return {
+        "schema_version": UPLOAD_STATE_SCHEMA_VERSION,
+        "source": SOURCE_NAME,
+        "status": status,
+        "directory": str(directory),
+        "uploaded": [],
+        "skipped": [],
+        "failed": [],
+        **extra,
+    }
+
+
+def upload_folder(
+    directory: Path,
+    root: Path,
+    config: Sc2ReplayStatsConfig,
+    *,
+    opener: Callable[..., Any] = urlopen,
+    now: datetime | None = None,
+) -> dict[str, Any]:
+    """Upload every unsubmitted replay in a folder, keyed by content hash."""
+
+    if not config.enabled or not config.upload_enabled:
+        return _upload_result("disabled", directory)
+    authorization = os.environ.get(config.auth_env, "").strip()
+    if not authorization:
+        return _upload_result("not_configured", directory, message=f"Set {config.auth_env} to enable replay uploads")
+    if not directory.exists() or not directory.is_dir():
+        return _upload_result("error", directory, message=f"Replay directory does not exist: {directory}")
+    try:
+        client = Sc2ReplayStatsClient(config.base_url, authorization, opener=opener)
+    except Sc2ReplayStatsError as exc:
+        return _upload_result("error", directory, message=str(exc))
+
+    state = _load_upload_state(root)
+    files_state = state["files"]
+    current = now or _utc_now()
+    result = _upload_result("completed", directory)
+    replay_paths = sorted(
+        (path for path in directory.iterdir() if path.is_file() and path.suffix.casefold() == ".sc2replay"),
+        key=lambda path: path.name.casefold(),
+    )
+    for replay_path in replay_paths:
+        try:
+            replay_hash = sha256_file(replay_path)
+            stat = replay_path.stat()
+        except OSError as exc:
+            result["failed"].append({"name": replay_path.name, "error": "could not read replay file"})
+            continue
+        previous = files_state.get(replay_hash, {})
+        if previous.get("status") == "submitted":
+            result["skipped"].append({"name": replay_path.name, "hash": replay_hash, "reason": "already_submitted"})
+            continue
+        try:
+            upload = client.post_replay(replay_path, config.upload_method)
+        except (OSError, Sc2ReplayStatsError) as exc:
+            files_state[replay_hash] = {
+                "name": replay_path.name,
+                "size": stat.st_size,
+                "status": "failed",
+                "last_attempt_at": _iso(current),
+                "error": str(exc),
+            }
+            result["failed"].append({"name": replay_path.name, "hash": replay_hash, "error": str(exc)})
+            continue
+        entry = {
+            "name": replay_path.name,
+            "size": stat.st_size,
+            "status": "submitted",
+            "submitted_at": _iso(current),
+            "queue_id": upload.get("queue_id"),
+        }
+        files_state[replay_hash] = entry
+        result["uploaded"].append({"name": replay_path.name, "hash": replay_hash, "queue_id": upload.get("queue_id")})
+    write_json(_upload_state_path(root), state)
+    result["counts"] = {
+        "found": len(replay_paths),
+        "uploaded": len(result["uploaded"]),
+        "skipped": len(result["skipped"]),
+        "failed": len(result["failed"]),
+    }
+    return result
+
+
+def watch_upload_folder(
+    directory: Path,
+    root: Path,
+    config: Sc2ReplayStatsConfig,
+    *,
+    on_scan: Callable[[dict[str, Any]], None] | None = None,
+    opener: Callable[..., Any] = urlopen,
+) -> None:
+    """Keep scanning until interrupted, uploading each new content hash once."""
+
+    while True:
+        result = upload_folder(directory, root, config, opener=opener)
+        if on_scan:
+            on_scan(result)
+        time.sleep(config.watch_poll_seconds)
 
 
 def _empty_result(extraction: dict[str, Any], config: Sc2ReplayStatsConfig, status: str, **extra: Any) -> dict[str, Any]:

@@ -18,3 +18,6 @@ enabled = true
 base_url = "https://api.sc2replaystats.com"
 auth_env = "SC2REPLAYSTATS_AUTH"
 cache_ttl_seconds = 900
+upload_enabled = true
+upload_method = "standalone"
+watch_poll_seconds = 30

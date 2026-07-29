@@ -43,9 +43,9 @@ Each analysis bundle contains:
 
 All player-facing timestamps use real elapsed time. Raw game loops remain the canonical internal coordinate.
 
-## Optional Sc2ReplayStats enrichment
+## Optional Sc2ReplayStats pull and upload
 
-The analyzer can pull the account's latest replay from Sc2ReplayStats on each analysis. This is read-only enrichment: Blizzard's local `s2protocol` extraction remains authoritative, and external data is kept separate in `sc2replaystats.json` and the evidence report.
+The analyzer can pull the account's latest replay from Sc2ReplayStats on each analysis. Blizzard's local `s2protocol` extraction remains authoritative, and external data is kept separate in `sc2replaystats.json` and the evidence report. Analysis never uploads a local replay.
 
 Set the authorization value in the environment using the variable named by `[sc2replaystats].auth_env`; do not put the key in `config.toml`, source code, reports, or Git:
 
@@ -61,6 +61,14 @@ The API response is cached under `.cache/sc2replaystats/<replay-hash>/` for the 
 ```
 
 If the credential is absent, the service is unavailable, or the remote latest replay cannot be confidently matched to the local file, local analysis still completes and records the external status as `not_configured`, `error`, or `latest_remote_unverified`.
+
+To upload every replay currently in the configured Multiplayer folder, then keep watching for new files:
+
+```bash
+./sc2review upload --watch
+```
+
+Use `--replay-dir "/path/to/Multiplayer"` when `[replays].directory` is not configured. Uploads are keyed by replay content hash and recorded in `.cache/sc2replaystats/upload-state.json`; already-submitted replays are skipped and failed uploads are retried on the next scan. Sc2ReplayStats receives the replay file through its documented upload endpoint, so use this watcher only when you intend to share the folder's replays.
 
 The default coaching lens is spending and resource conversion: meaningful float episodes, supply room, worker/base benchmarks, production capacity, larva when observable, and bounded purchase equivalents. Combat is included in the short review only when it explains a spending window or replacement need.
 

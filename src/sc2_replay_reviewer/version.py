@@ -1,4 +1,4 @@
-TOOL_VERSION = "0.2.0"
+TOOL_VERSION = "0.3.0"
 SCHEMA_VERSION = "1.0"
 FACTS_VERSION = "1.2"
 PARSER_VERSION = "s2protocol-5.0.16.97563.0-normalization-3"

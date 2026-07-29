@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+from dataclasses import replace
 from pathlib import Path
 
 from .config import load_config
@@ -12,6 +13,7 @@ from .errors import ReplayReviewError
 from .pipeline import analyze, inspect, load_or_extract, timeline_csv
 from .player import resolve_player
 from .schema import validate_extraction
+from .sc2replaystats import upload_folder, watch_upload_folder
 from .serialization import write_json
 
 
@@ -44,15 +46,20 @@ def _parser() -> argparse.ArgumentParser:
         "timeline": "Print the factual timeline as CSV",
         "engagements": "Print spatially clustered engagement facts as JSON",
         "validate": "Validate replay extraction and schema support",
+        "upload": "Upload every unsubmitted replay in the configured folder",
     }.items():
         child = sub.add_parser(command, help=help_text)
-        child.add_argument("replay", help="Path or filename of a .SC2Replay file; relative names use [replays].directory")
+        if command != "upload":
+            child.add_argument("replay", help="Path or filename of a .SC2Replay file; relative names use [replays].directory")
         if command in {"analyze", "timeline", "engagements"}:
             child.add_argument("--player", help="Exact replay participant name")
         child.add_argument("--config", type=Path, default=None, help="TOML config path (default: project config.toml)")
         child.add_argument("--replay-dir", type=Path, default=None, help="Override the configured replay directory")
         if command == "analyze":
             child.add_argument("--refresh-sc2replaystats", action="store_true", help="Ignore the external stats cache and pull again")
+        if command == "upload":
+            child.add_argument("--watch", action="store_true", help="Keep watching and upload new replay files until interrupted")
+            child.add_argument("--poll-seconds", type=int, default=None, help="Override the watch interval")
         child.add_argument("--root", type=Path, default=None, help=argparse.SUPPRESS)
     return parser
 
@@ -68,6 +75,34 @@ def main(argv: list[str] | None = None) -> int:
     config_path = (getattr(args, "config", None) or root / "config.toml").resolve()
     try:
         config = load_config(config_path)
+        if args.command == "upload":
+            replay_directory = (args.replay_dir or config.replays.directory)
+            if replay_directory is None:
+                raise ReplayReviewError("Set [replays].directory or pass --replay-dir before uploading")
+            upload_config = config.sc2replaystats
+            if args.poll_seconds is not None:
+                if args.poll_seconds < 1:
+                    raise ReplayReviewError("--poll-seconds must be at least 1")
+                upload_config = replace(upload_config, watch_poll_seconds=args.poll_seconds)
+            if args.watch:
+                first = upload_folder(replay_directory.expanduser().resolve(), root, upload_config)
+                print(json.dumps(first, ensure_ascii=False, indent=2, sort_keys=True))
+                if first["status"] in {"not_configured", "disabled", "error"}:
+                    return 2
+                print(f"Watching {replay_directory} every {upload_config.watch_poll_seconds}s; press Ctrl-C to stop.")
+                try:
+                    watch_upload_folder(
+                        replay_directory.expanduser().resolve(),
+                        root,
+                        upload_config,
+                        on_scan=lambda result: print(json.dumps(result, ensure_ascii=False, sort_keys=True), flush=True),
+                    )
+                except KeyboardInterrupt:
+                    print("Upload watcher stopped.")
+                return 0
+            result = upload_folder(replay_directory.expanduser().resolve(), root, upload_config)
+            print(json.dumps(result, ensure_ascii=False, indent=2, sort_keys=True))
+            return 0 if result["status"] == "completed" else 2
         replay_path = _path(args.replay, args.replay_dir or config.replays.directory)
         if args.command == "inspect":
             result, _ = inspect(replay_path, root)

@@ -26,12 +26,15 @@ class ReplayConfig:
 
 @dataclass(frozen=True)
 class Sc2ReplayStatsConfig:
-    """Optional read-only enrichment from the user's Sc2ReplayStats account."""
+    """Optional pull and explicit-upload integration for the user's account."""
 
     enabled: bool = True
     base_url: str = "https://api.sc2replaystats.com"
     auth_env: str = "SC2REPLAYSTATS_AUTH"
     cache_ttl_seconds: int = 900
+    upload_enabled: bool = True
+    upload_method: str = "standalone"
+    watch_poll_seconds: int = 30
 
 
 @dataclass(frozen=True)
@@ -77,5 +80,8 @@ def load_config(path: Path) -> AppConfig:
             base_url=str(sc2replaystats.get("base_url", "https://api.sc2replaystats.com")).rstrip("/"),
             auth_env=str(sc2replaystats.get("auth_env", "SC2REPLAYSTATS_AUTH")),
             cache_ttl_seconds=max(0, int(sc2replaystats.get("cache_ttl_seconds", 900))),
+            upload_enabled=bool(sc2replaystats.get("upload_enabled", True)),
+            upload_method=str(sc2replaystats.get("upload_method", "standalone")),
+            watch_poll_seconds=max(1, int(sc2replaystats.get("watch_poll_seconds", 30))),
         ),
     )

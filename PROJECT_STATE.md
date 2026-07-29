@@ -11,7 +11,7 @@ The project is a local Python package exposed through `./sc2review` and `uv run 
 3. `engagements.py` clusters deaths using both game-loop proximity and map position, then computes local losses, pre/post state, and approximate reinforcement observations.
 4. `review.py` generates structured facts and explicitly labeled inferences, including candidate negative turning points, favorable transitions, and a causal chain. Killer-attributed losses are retained per engagement so cheap-unit trades are not automatically labeled failures.
 5. `reports.py` writes the concise spending-first `review.md`, the detailed audit `evidence.md`, and a compatibility `report.md` index; `pipeline.py` handles the content-hash cache and replay-specific outputs.
-6. `sc2replaystats.py` optionally pulls the account's latest remote replay as supplemental external data. It uses the documented HTTPS API, caches by local replay hash, and never merges remote payloads into canonical extraction facts or coaching inferences.
+6. `sc2replaystats.py` optionally pulls the account's latest remote replay as supplemental external data and provides an explicit hash-tracked folder uploader. It uses the documented HTTPS API, keeps upload state locally, and never merges remote payloads into canonical extraction facts or coaching inferences.
 
 The canonical internal model is JSON-compatible dictionaries with stable evidence IDs. Parser-specific dictionaries are retained only inside each normalized event's `payload` for auditability; downstream code uses normalized top-level fields. The current derivation facts version is `1.2`, including float start-bank fields, float episodes, and bounded purchase power.
 
@@ -31,6 +31,8 @@ The canonical internal model is JSON-compatible dictionaries with stable evidenc
 ./sc2review bootstrap
 ./sc2review analyze "/path/to/game.SC2Replay" --player "ExactName"
 ./sc2review analyze "/path/to/game.SC2Replay" --player "ExactName" --refresh-sc2replaystats
+./sc2review upload
+./sc2review upload --watch
 uv run sc2review analyze "/path/to/game.SC2Replay" --player "ExactName"
 ./sc2review inspect "/path/to/game.SC2Replay"
 ./sc2review timeline "/path/to/game.SC2Replay" --player "ExactName"
@@ -96,4 +98,4 @@ The named licensed fixture was not mounted. An auxiliary local replay with base 
 - `evidence.md` is the canonical human-readable audit report. `report.md` is retained as a compatibility index so existing consumers can find the separated outputs without receiving the verbose evidence by default.
 - The repository package excludes `.SC2Replay` files, output/cache/virtual-environment directories, and local `.agents`/`.codex` metadata. Replay locations are configured by the consumer in `config.toml` or per command with `--replay-dir`; no personal replay path is part of the shareable source.
 - `s2protocol` remains authoritative; sc2reader must not silently become the internal data model.
-- Sc2ReplayStats integration is read-only and optional. It reads `SC2REPLAYSTATS_AUTH` (or the configured environment-variable name), calls `/account/last-replay` and optional replay detail, and degrades non-fatally when credentials, network, or matching data are unavailable. The key is never stored in the repository or output.
+- Sc2ReplayStats pull integration is optional and read-only during analysis. The explicit upload command reads `SC2REPLAYSTATS_AUTH` (or the configured environment-variable name), sends each content hash once to `POST /replay`, and stores queue state under `.cache/sc2replaystats/upload-state.json`. Analysis never uploads implicitly; upload failures are retryable and replay files are never deleted or moved.

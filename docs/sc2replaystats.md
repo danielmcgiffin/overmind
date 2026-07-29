@@ -1,6 +1,6 @@
 # Sc2ReplayStats integration
 
-The project has an optional, read-only Sc2ReplayStats integration for supplemental account data. It is deliberately not a second replay parser.
+The project has an optional Sc2ReplayStats integration for supplemental account data and explicit replay uploads. It is deliberately not a second replay parser.
 
 ## Authentication
 
@@ -24,7 +24,7 @@ The secret is never written to the repository, config, output, cache metadata, e
 
 ## Pull behavior
 
-`analyze` calls `GET /account/last-replay` and, when an ID is present, requests replay detail from `GET /replay/{replay_id}` with the documented `players`, `account`, `players-replay-info`, and `map` includes. No upload endpoint is called.
+`analyze` calls `GET /account/last-replay` and, when an ID is present, requests replay detail from `GET /replay/{replay_id}` with the documented `players`, `account`, `players-replay-info`, and `map` includes. Analysis never calls the upload endpoint.
 
 The result is cached by the local replay content hash under `.cache/sc2replaystats/<replay-hash>/sc2replaystats.json`. The default TTL is 15 minutes. `--refresh-sc2replaystats` bypasses the cache for one analysis.
 
@@ -34,7 +34,21 @@ The external payload is compared to the local replay using a high-confidence has
 
 Local s2protocol facts remain the canonical extraction. Sc2ReplayStats data is stored as supplemental external data in `sc2replaystats.json` and summarized in the evidence layer. It is not merged into `findings.json`, and no external metric is promoted into `review.md` until its response field semantics are verified and versioned.
 
-Missing credentials, HTTP errors, timeouts, invalid JSON, and unmatched remote replays are non-fatal. The local replay report still completes with an explicit external status.
+Missing credentials, HTTP errors, timeouts, invalid JSON, and unmatched remote replays are non-fatal to analysis. The local replay report still completes with an explicit external status.
+
+## Upload behavior
+
+To upload every `.SC2Replay` currently in the configured Multiplayer directory and continue watching for new files, run:
+
+```bash
+./sc2review upload --watch
+```
+
+The command first scans the folder, then polls every `watch_poll_seconds` (30 by default). A one-shot scan is available with `./sc2review upload`. `--replay-dir` overrides `[replays].directory` for either form.
+
+Each replay is hashed locally with SHA-256. Successful submissions are recorded in `.cache/sc2replaystats/upload-state.json`, so restarting the watcher does not re-upload the same content. Failed files remain retryable. The upload request is a multipart `POST /replay` with `replay_file` and `upload_method=standalone`; the API's returned queue identifier is retained locally. The uploader does not delete, rename, or move replay files.
+
+The first run uploads all matching files in the folder, not just files created after the watcher starts. This is intentional and is the explicit upload consent boundary.
 
 ## API reference
 

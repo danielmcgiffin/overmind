@@ -8,4 +8,4 @@ Keep facts extracted from replay events and snapshots separate from strategic in
 
 Run the relevant tests and an end-to-end `./sc2review analyze ...` validation before handing off changes. Update `PROJECT_STATE.md` when parser behavior, supported builds, schemas, commands, or known limitations change.
 
-The optional Sc2ReplayStats integration is supplemental only. Read its credential from the configured environment variable; never put authorization values in tracked files, output, cache metadata, logs, or commits. Keep external API payloads separate from local replay facts and strategic interpretations, and verify response field semantics before using them in coaching conclusions.
+The optional Sc2ReplayStats integration keeps pulled API payloads separate from local replay facts and strategic interpretations. Read its credential from the configured environment variable; never put authorization values in tracked files, output, cache metadata, logs, or commits. Analysis must not upload files implicitly. The upload watcher is an explicit command and must preserve hash-based duplicate protection, retryable failures, and the no-delete/no-move behavior.
